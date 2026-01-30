@@ -21,15 +21,26 @@ const POSView: React.FC = () => {
   const { user } = useAuth();
   
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [activeTab, setActiveTab] = useState<'ALL' | 'PACKAGED' | 'DRINKS' | 'HISTORY'>('ALL');
+  const [activeTab, setActiveTab] = useState<'ALL' | 'PACKAGED' | 'DRINKS' | 'HISTORY' | 'RETURNS'>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
   const [historySearch, setHistorySearch] = useState('');
+  const [returnInvoiceSearch, setReturnInvoiceSearch] = useState('');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [showMobileCart, setShowMobileCart] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [pastTransactions, setPastTransactions] = useState<any[]>([]);
+  const [returnRequests, setReturnRequests] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
+  
+  // Return Processing State
+  const [searchingInvoice, setSearchingInvoice] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
+  const [itemsToReturn, setItemsToReturn] = useState<any[]>([]);
+  const [returnReason, setReturnReason] = useState('');
+  const [showReturnSuccess, setShowReturnSuccess] = useState(false);
+  const [showManagerApprovalModal, setShowManagerApprovalModal] = useState(false);
+  const [pendingReturnRequest, setPendingReturnRequest] = useState<any>(null);
   const [settings, setSettings] = useState<SystemSettings>({
     id: '',
     printer_width: '80mm',
@@ -43,6 +54,7 @@ const POSView: React.FC = () => {
   // Checkout & Results State
   const [showSuccess, setShowSuccess] = useState(false);
   const [lastTransaction, setLastTransaction] = useState<any>(null);
+  const [lastReturnRequest, setLastReturnRequest] = useState<any>(null);
   const [isReprint, setIsReprint] = useState(false);
   const [reprintTime, setReprintTime] = useState<string | null>(null);
 
@@ -107,13 +119,28 @@ const POSView: React.FC = () => {
     } catch (error) { console.error(error); } finally { setIsLoading(false); }
   }, []);
 
+  const fetchReturnRequests = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('return_requests')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      setReturnRequests(data || []);
+    } catch (error) { console.error(error); } finally { setIsLoading(false); }
+  }, []);
+
   useEffect(() => { 
     if (activeTab === 'HISTORY') {
       fetchHistory();
+    } else if (activeTab === 'RETURNS') {
+      fetchReturnRequests();
     } else {
       fetchInventory(); 
     }
-  }, [lang, activeTab, fetchInventory, fetchHistory]);
+  }, [lang, activeTab, fetchInventory, fetchHistory, fetchReturnRequests]);
 
   const generateInvoiceNumber = (sequence: number = 1) => {
     // REQ-005: Generate sequential invoice numbers
@@ -285,6 +312,7 @@ const POSView: React.FC = () => {
         return;
       }
 
+      setLastReturnRequest(null);
       setLastTransaction(transaction);
       setIsReprint(true);
       const now = new Date().toISOString();
@@ -305,9 +333,175 @@ const POSView: React.FC = () => {
 
       setTimeout(() => window.print(), 200);
     } else if (lastTransaction) {
+      setLastReturnRequest(null);
       setIsReprint(false);
       setReprintTime(null);
       window.print();
+    }
+  };
+
+  const handlePrintReturn = (request: any) => {
+    setLastTransaction(null);
+    setLastReturnRequest(request);
+    setTimeout(() => window.print(), 200);
+  };
+
+  const searchInvoice = async () => {
+    if (!returnInvoiceSearch.trim()) return;
+    setSearchingInvoice(true);
+    setSelectedInvoice(null);
+    setItemsToReturn([]);
+    
+    try {
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('id', returnInvoiceSearch.trim())
+        .single();
+      
+      if (error || !data) {
+        alert(lang === 'ar' ? 'الفاتورة غير موجودة' : 'Invoice not found');
+        return;
+      }
+      
+      if (data.is_returned) {
+        alert(lang === 'ar' ? 'تم إرجاع هذه الفاتورة بالفعل' : 'This invoice has already been returned');
+        return;
+      }
+
+      setSelectedInvoice(data);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setSearchingInvoice(false);
+    }
+  };
+
+  const toggleReturnItem = (item: any) => {
+    setItemsToReturn(prev => {
+      const exists = prev.find(i => i.cartId === item.cartId);
+      if (exists) return prev.filter(i => i.cartId !== item.cartId);
+      return [...prev, { ...item, return_reason: '' }];
+    });
+  };
+
+  const updateReturnReason = (cartId: string, reason: string) => {
+    setItemsToReturn(prev => prev.map(i => i.cartId === cartId ? { ...i, return_reason: reason } : i));
+  };
+
+  const submitReturnRequest = async () => {
+    if (itemsToReturn.length === 0 || !selectedInvoice) return;
+    if (itemsToReturn.some(i => !i.return_reason)) {
+      alert(lang === 'ar' ? 'يرجى تحديد سبب الإرجاع لجميع الأصناف' : 'Please specify return reason for all items');
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      const refundAmount = itemsToReturn.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+      const isFullRefund = itemsToReturn.length === selectedInvoice.items.length;
+
+      const returnData = {
+        invoice_number: selectedInvoice.id,
+        items: itemsToReturn,
+        total_refund_amount: refundAmount,
+        refund_type: isFullRefund ? 'FULL' : 'PARTIAL',
+        status: 'PENDING_APPROVAL',
+        requested_by_id: user?.id === 'demo-user' ? null : user?.id,
+        requested_by_name: user?.name || 'Cashier',
+        created_at: new Date().toISOString()
+      };
+
+      const { data, error } = await supabase
+        .from('return_requests')
+        .insert([returnData])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      setReturnInvoiceSearch('');
+      setPendingReturnRequest(data);
+      setShowManagerApprovalModal(true);
+      
+      // REQ-007: Log initial request status
+      console.log(`[LOG] Return request submitted: ${data.id} for invoice ${selectedInvoice.id}`);
+    } catch (error) {
+      console.error(error);
+      alert("Failed to submit return request");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const approveRefund = async (requestId: string, approved: boolean) => {
+    if (user?.role !== 'ADMIN' && user?.role !== 'MANAGER') {
+      alert(lang === 'ar' ? 'غير مصرح لك بالموافقة على المرتجعات' : 'Not authorized to approve returns');
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      const status = approved ? 'APPROVED' : 'REJECTED';
+      
+      const { data: request, error: reqError } = await supabase
+        .from('return_requests')
+        .update({ 
+          status, 
+          manager_id: user?.id === 'demo-user' ? null : user?.id,
+          manager_name: user?.name,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', requestId)
+        .select()
+        .single();
+
+      if (reqError) throw reqError;
+
+      // REQ-007: Log approval/rejection action
+      console.log(`[LOG] Return ${status}: ${requestId} by ${user?.name || 'Manager'}`);
+
+      if (approved) {
+        // REQ-005: Update inventory for returned items
+        const { data: allInv } = await supabase.from('inventory_items').select('*');
+        
+        for (const item of request.items) {
+          // Only update stock for packaged coffee or ingredients
+          if (item.type !== 'BEVERAGE') {
+            const dbItem = allInv?.find(inv => inv.id === item.id);
+            if (dbItem) {
+              const newStock = dbItem.stock + item.quantity;
+              const { error: invError } = await supabase.from('inventory_items')
+                .update({ stock: newStock })
+                .eq('id', dbItem.id);
+              
+              if (invError) console.error(`Failed to update stock for ${item.name}`, invError);
+              else console.log(`[LOG] Inventory updated: ${item.name} (${dbItem.stock} -> ${newStock})`);
+            }
+          }
+        }
+
+        // Update original transaction status
+        const { error: txError } = await supabase
+          .from('transactions')
+          .update({ is_returned: true, return_id: requestId })
+          .eq('id', request.invoice_number);
+        
+        if (txError) console.error(`Failed to update original transaction ${request.invoice_number}`, txError);
+      }
+
+      setShowManagerApprovalModal(false);
+      setPendingReturnRequest(null);
+      setSelectedInvoice(null);
+      setItemsToReturn([]);
+      setShowReturnSuccess(approved);
+      fetchReturnRequests();
+      fetchInventory();
+    } catch (error) {
+      console.error(error);
+      alert("Action failed");
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -384,6 +578,13 @@ const POSView: React.FC = () => {
           <div className={`${settings.printer_width === '58mm' ? 'text-lg' : 'text-xl'} font-black uppercase mb-1`}>{settings.store_name || t.appName}</div>
           <div className="text-[10px] opacity-80">{settings.store_address || t.storeAddress}</div>
           <div className="text-[10px] opacity-80">{t.storeCity} | {settings.store_phone || t.storePhone}</div>
+          
+          {lastReturnRequest && (
+            <div className="mt-2 py-1 bg-black text-white text-[10px] font-black uppercase tracking-widest">
+              {lang === 'ar' ? 'إيصال مرتجع' : 'RETURN RECEIPT'}
+            </div>
+          )}
+
           {isReprint && (
              <div className="mt-2 py-1 bg-black text-white text-[10px] font-black uppercase tracking-widest">
                {t.reprintedReceipt}
@@ -397,119 +598,191 @@ const POSView: React.FC = () => {
           <div className="mt-2 border-b border-dashed border-black"></div>
         </div>
 
-        <div className="space-y-2 mb-4">
-          <div className="flex justify-between">
-            <span className="opacity-70">{t.invoiceNo}:</span>
-            <span className="font-bold">{lastTransaction?.id}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="opacity-70">{lang === 'ar' ? 'التاريخ:' : 'Date:'}</span>
-            <span>{lastTransaction ? new Date(lastTransaction.created_at).toLocaleString(lang === 'ar' ? 'ar-QA' : 'en-US') : ''}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="opacity-70">{t.cashierLabel}:</span>
-            <span>{lastTransaction?.cashier_name}</span>
-          </div>
-        </div>
+        {lastReturnRequest ? (
+          /* Return Receipt Layout */
+          <>
+            <div className="space-y-2 mb-4">
+              <div className="flex justify-between">
+                <span className="opacity-70">{lang === 'ar' ? 'رقم المرتجع:' : 'Return ID:'}</span>
+                <span className="font-bold">{lastReturnRequest.id.slice(0, 8)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="opacity-70">{t.invoiceNo}:</span>
+                <span className="font-bold">{lastReturnRequest.invoice_number}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="opacity-70">{lang === 'ar' ? 'التاريخ:' : 'Date:'}</span>
+                <span>{new Date(lastReturnRequest.created_at).toLocaleString(lang === 'ar' ? 'ar-QA' : 'en-US')}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="opacity-70">{lang === 'ar' ? 'بواسطة:' : 'Requested By:'}</span>
+                <span>{lastReturnRequest.requested_by_name}</span>
+              </div>
+              {lastReturnRequest.manager_name && (
+                <div className="flex justify-between">
+                  <span className="opacity-70">{lang === 'ar' ? 'باعتماد:' : 'Approved By:'}</span>
+                  <span>{lastReturnRequest.manager_name}</span>
+                </div>
+              )}
+            </div>
 
-        <div className="border-b-2 border-dashed border-black mb-3"></div>
-        
-        <table className="w-full mb-4 border-collapse">
-          <thead>
-            <tr className="border-b border-black">
-              <th className="text-left py-2 font-black uppercase text-[10px]">{lang === 'ar' ? 'الصنف' : 'Item'}</th>
-              <th className="text-right py-2 font-black uppercase text-[10px]">{lang === 'ar' ? 'الإجمالي' : 'Total'}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lastTransaction?.items.map((item: any, i: number) => (
-              <tr key={i} className="align-top border-b border-dotted border-stone-200">
-                <td className="py-3 pr-2">
-                  <div className="font-black text-[12px]">{item.name}</div>
-                  <div className="text-[10px] opacity-80 mt-0.5">
-                    {item.quantity} x {item.price.toFixed(2)} {t.currency}
-                  </div>
-                  {item.selectedCustomizations && (
-                    <div className="text-[9px] italic opacity-70 mt-0.5">
-                      {item.selectedCustomizations.size}
-                      {item.selectedCustomizations.milkType !== 'Full Fat' ? `, ${item.selectedCustomizations.milkType}` : ''}
-                      {item.selectedCustomizations.selectedAddOns?.length > 0 ? `, +${item.selectedCustomizations.selectedAddOns.length} extras` : ''}
+            <div className="border-b-2 border-dashed border-black mb-3"></div>
+            
+            <table className="w-full mb-4 border-collapse">
+              <thead>
+                <tr className="border-b border-black">
+                  <th className="text-left py-2 font-black uppercase text-[10px]">{lang === 'ar' ? 'الصنف المرتجع' : 'Returned Item'}</th>
+                  <th className="text-right py-2 font-black uppercase text-[10px]">{lang === 'ar' ? 'المبلغ' : 'Amount'}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lastReturnRequest.items.map((item: any, i: number) => (
+                  <tr key={i} className="align-top border-b border-dotted border-stone-200">
+                    <td className="py-3 pr-2">
+                      <div className="font-black text-[12px]">{item.name}</div>
+                      <div className="text-[10px] opacity-80 mt-0.5">
+                        {item.quantity} x {item.price.toFixed(2)}
+                      </div>
+                      <div className="text-[9px] italic opacity-70 mt-1 bg-stone-50 p-1 rounded">
+                        {lang === 'ar' ? 'السبب:' : 'Reason:'} {item.return_reason}
+                      </div>
+                    </td>
+                    <td className="text-right py-3 font-black text-[12px]">
+                      {(item.price * item.quantity).toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="border-t-2 border-black pt-4 mb-6">
+              <div className="flex justify-between text-lg font-black">
+                <span>{lang === 'ar' ? 'إجمالي الاسترداد' : 'TOTAL REFUND'}</span>
+                <span>{lastReturnRequest.total_refund_amount.toFixed(2)} {t.currency}</span>
+              </div>
+              <div className="text-[10px] font-bold text-center mt-2 opacity-60">
+                {lang === 'ar' ? 'تم استرداد المبلغ إلى العميل بنجاح' : 'Refund issued to customer successfully'}
+              </div>
+            </div>
+          </>
+        ) : (
+          /* Normal Transaction Layout */
+          <>
+            <div className="space-y-2 mb-4">
+              <div className="flex justify-between">
+                <span className="opacity-70">{t.invoiceNo}:</span>
+                <span className="font-bold">{lastTransaction?.id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="opacity-70">{lang === 'ar' ? 'التاريخ:' : 'Date:'}</span>
+                <span>{lastTransaction ? new Date(lastTransaction.created_at).toLocaleString(lang === 'ar' ? 'ar-QA' : 'en-US') : ''}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="opacity-70">{t.cashierLabel}:</span>
+                <span>{lastTransaction?.cashier_name}</span>
+              </div>
+            </div>
+
+            <div className="border-b-2 border-dashed border-black mb-3"></div>
+            
+            <table className="w-full mb-4 border-collapse">
+              <thead>
+                <tr className="border-b border-black">
+                  <th className="text-left py-2 font-black uppercase text-[10px]">{lang === 'ar' ? 'الصنف' : 'Item'}</th>
+                  <th className="text-right py-2 font-black uppercase text-[10px]">{lang === 'ar' ? 'الإجمالي' : 'Total'}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lastTransaction?.items.map((item: any, i: number) => (
+                  <tr key={i} className="align-top border-b border-dotted border-stone-200">
+                    <td className="py-3 pr-2">
+                      <div className="font-black text-[12px]">{item.name}</div>
+                      <div className="text-[10px] opacity-80 mt-0.5">
+                        {item.quantity} x {item.price.toFixed(2)} {t.currency}
+                      </div>
+                      {item.selectedCustomizations && (
+                        <div className="text-[9px] italic opacity-70 mt-0.5">
+                          {item.selectedCustomizations.size}
+                          {item.selectedCustomizations.milkType !== 'Full Fat' ? `, ${item.selectedCustomizations.milkType}` : ''}
+                          {item.selectedCustomizations.selectedAddOns?.length > 0 ? `, +${item.selectedCustomizations.selectedAddOns.length} extras` : ''}
+                        </div>
+                      )}
+                    </td>
+                    <td className="text-right py-3 font-black text-[12px]">
+                      {(item.price * item.quantity).toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="border-b border-dashed border-black my-2"></div>
+
+            <div className="space-y-2 text-[11px] mb-4">
+              <div className="flex justify-between">
+                <span className="opacity-70">{t.subtotal}</span>
+                <span className="font-bold">{lastTransaction?.subtotal?.toFixed(2) || lastTransaction?.total.toFixed(2)} {t.currency}</span>
+              </div>
+              {(lastTransaction?.vat_amount > 0 || settings.vat_rate > 0) && (
+                <div className="flex justify-between">
+                  <span className="opacity-70">{t.tax} ({(settings.vat_rate * 100).toFixed(0)}%)</span>
+                  <span className="font-bold">{lastTransaction?.vat_amount?.toFixed(2) || (lastTransaction?.total * settings.vat_rate).toFixed(2)} {t.currency}</span>
+                </div>
+              )}
+              {lastTransaction?.discount_amount > 0 && (
+                <div className="flex justify-between text-black">
+                  <span className="opacity-70">{t.discount}</span>
+                  <span className="font-bold">-{lastTransaction.discount_amount.toFixed(2)} {t.currency}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-lg font-black pt-2 border-t-2 border-black mt-2">
+                <span>{t.total}</span>
+                <span>{lastTransaction?.total.toFixed(2)} {t.currency}</span>
+              </div>
+            </div>
+
+            <div className="border-b-2 border-dashed border-black mb-4"></div>
+
+            <div className="space-y-2 text-[10px] mb-6">
+              <div className="flex justify-between">
+                <span className="opacity-70">{t.payment}:</span>
+                <span className="font-black uppercase">{lastTransaction?.payment_method}</span>
+              </div>
+              {lastTransaction?.payment_breakdown && (
+                <div className="pl-4 space-y-1 border-l-2 border-stone-100 ml-1">
+                  {lastTransaction.payment_breakdown.cash > 0 && (
+                    <div className="flex justify-between">
+                      <span className="opacity-60">{t.cash}</span>
+                      <span>{lastTransaction.payment_breakdown.cash.toFixed(2)}</span>
                     </div>
                   )}
-                </td>
-                <td className="text-right py-3 font-black text-[12px]">
-                  {(item.price * item.quantity).toFixed(2)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <div className="border-b border-dashed border-black my-2"></div>
-
-        <div className="space-y-2 text-[11px] mb-4">
-          <div className="flex justify-between">
-            <span className="opacity-70">{t.subtotal}</span>
-            <span className="font-bold">{lastTransaction?.subtotal?.toFixed(2) || lastTransaction?.total.toFixed(2)} {t.currency}</span>
-          </div>
-          {(lastTransaction?.vat_amount > 0 || settings.vat_rate > 0) && (
-            <div className="flex justify-between">
-              <span className="opacity-70">{t.tax} ({(settings.vat_rate * 100).toFixed(0)}%)</span>
-              <span className="font-bold">{lastTransaction?.vat_amount?.toFixed(2) || (lastTransaction?.total * settings.vat_rate).toFixed(2)} {t.currency}</span>
-            </div>
-          )}
-          {lastTransaction?.discount_amount > 0 && (
-            <div className="flex justify-between text-red-600">
-              <span className="opacity-70">{t.discount}</span>
-              <span className="font-bold">-{lastTransaction.discount_amount.toFixed(2)} {t.currency}</span>
-            </div>
-          )}
-          <div className="flex justify-between text-lg font-black pt-2 border-t-2 border-black mt-2">
-            <span>{t.total}</span>
-            <span>{lastTransaction?.total.toFixed(2)} {t.currency}</span>
-          </div>
-        </div>
-
-        <div className="border-b-2 border-dashed border-black mb-4"></div>
-
-        <div className="space-y-2 text-[10px] mb-6">
-          <div className="flex justify-between">
-            <span className="opacity-70">{t.payment}:</span>
-            <span className="font-black uppercase">{lastTransaction?.payment_method}</span>
-          </div>
-          {lastTransaction?.payment_breakdown && (
-            <div className="pl-4 space-y-1 border-l-2 border-stone-100 ml-1">
-              {lastTransaction.payment_breakdown.cash > 0 && (
-                <div className="flex justify-between">
-                  <span className="opacity-60">{t.cash}</span>
-                  <span>{lastTransaction.payment_breakdown.cash.toFixed(2)}</span>
+                  {lastTransaction.payment_breakdown.card > 0 && (
+                    <div className="flex justify-between">
+                      <span className="opacity-60">{t.card}</span>
+                      <span>{lastTransaction.payment_breakdown.card.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {lastTransaction.payment_breakdown.mobile > 0 && (
+                    <div className="flex justify-between">
+                      <span className="opacity-60">{lang === 'ar' ? 'جوال' : 'Mobile'}</span>
+                      <span>{lastTransaction.payment_breakdown.mobile.toFixed(2)}</span>
+                    </div>
+                  )}
                 </div>
               )}
-              {lastTransaction.payment_breakdown.card > 0 && (
+              <div className="flex justify-between pt-2 border-t border-dotted border-stone-200">
+                <span className="opacity-70">{t.amountReceived}:</span>
+                <span className="font-bold">{lastTransaction?.received_amount?.toFixed(2) || lastTransaction?.total.toFixed(2)}</span>
+              </div>
+              {lastTransaction?.change_amount > 0 && (
                 <div className="flex justify-between">
-                  <span className="opacity-60">{t.card}</span>
-                  <span>{lastTransaction.payment_breakdown.card.toFixed(2)}</span>
-                </div>
-              )}
-              {lastTransaction.payment_breakdown.mobile > 0 && (
-                <div className="flex justify-between">
-                  <span className="opacity-60">{lang === 'ar' ? 'جوال' : 'Mobile'}</span>
-                  <span>{lastTransaction.payment_breakdown.mobile.toFixed(2)}</span>
+                  <span className="opacity-70 font-bold">{t.change}:</span>
+                  <span className="font-black text-black">{lastTransaction.change_amount.toFixed(2)}</span>
                 </div>
               )}
             </div>
-          )}
-          <div className="flex justify-between pt-2 border-t border-dotted border-stone-200">
-            <span className="opacity-70">{t.amountReceived}:</span>
-            <span className="font-bold">{lastTransaction?.received_amount?.toFixed(2) || lastTransaction?.total.toFixed(2)}</span>
-          </div>
-          {lastTransaction?.change_amount > 0 && (
-            <div className="flex justify-between">
-              <span className="opacity-70 font-bold">{t.change}:</span>
-              <span className="font-black text-amber-600">{lastTransaction.change_amount.toFixed(2)}</span>
-            </div>
-          )}
-        </div>
+          </>
+        )}
 
         <div className="text-center mt-10">
           <div className="text-[12px] font-black uppercase mb-2 tracking-widest">{t.thankYou}</div>
@@ -544,7 +817,7 @@ const POSView: React.FC = () => {
            <div className="bg-white dark:bg-stone-900 rounded-[48px] max-w-md w-full p-10 shadow-2xl animate-in zoom-in-95">
               <div className="flex justify-between items-center mb-8">
                  <div className="flex items-center gap-4">
-                    <div className="p-4 bg-blue-50 dark:bg-blue-900/20 text-blue-600 rounded-3xl"><CreditCard size={28}/></div>
+                    <div className="p-4 bg-white border-2 border-black text-black rounded-3xl"><CreditCard size={28}/></div>
                     <h3 className="text-2xl font-black">{t.card}</h3>
                  </div>
                  <button onClick={() => setShowCardInput(false)} className="p-2 hover:bg-stone-100 rounded-full transition-colors"><X size={32}/></button>
@@ -562,14 +835,14 @@ const POSView: React.FC = () => {
                     autoFocus 
                     value={cardReference} 
                     onChange={e => setCardReference(e.target.value)} 
-                    className="w-full bg-stone-50 dark:bg-stone-800 border-none rounded-2xl px-6 py-5 font-mono font-black text-2xl text-blue-600 outline-none focus:ring-2 focus:ring-blue-500 text-center" 
+                    className="w-full bg-stone-50 dark:bg-stone-800 border-none rounded-2xl px-6 py-5 font-mono font-black text-2xl text-black outline-none focus:ring-2 focus:ring-black text-center" 
                     placeholder="REF-0000" 
                  />
               </div>
               <button 
                 onClick={() => handleCheckout('CARD')}
                 disabled={isProcessing}
-                className="w-full mt-10 py-5 bg-stone-900 text-white rounded-[24px] font-black text-xl shadow-xl active:scale-95 transition-all disabled:opacity-30 flex items-center justify-center gap-3"
+                className="w-full mt-10 py-5 bg-black text-white rounded-[24px] font-black text-xl shadow-xl active:scale-95 transition-all disabled:opacity-30 flex items-center justify-center gap-3 border-2 border-black hover:bg-gray-900"
               >
                 {isProcessing ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} {t.completePayment}
               </button>
@@ -582,7 +855,7 @@ const POSView: React.FC = () => {
            <div className="bg-white dark:bg-stone-900 rounded-[48px] max-w-md w-full p-10 shadow-2xl animate-in zoom-in-95">
               <div className="flex justify-between items-center mb-8">
                  <div className="flex items-center gap-4">
-                    <div className="p-4 bg-green-50 dark:bg-green-900/20 text-green-600 rounded-3xl"><Banknote size={28}/></div>
+                    <div className="p-4 bg-white border-2 border-black text-black rounded-3xl"><Banknote size={28}/></div>
                     <h3 className="text-2xl font-black">{t.cash}</h3>
                  </div>
                  <button onClick={() => setShowCashModal(false)} className="p-2 hover:bg-stone-100 rounded-full transition-colors"><X size={32}/></button>
@@ -595,12 +868,12 @@ const POSView: React.FC = () => {
               </div>
               <div className="space-y-4">
                  <label className="text-[10px] font-black uppercase text-stone-400 block">{t.amountReceived}</label>
-                 <input type="number" autoFocus value={cashReceived} onChange={e => setCashReceived(e.target.value)} className="w-full bg-stone-50 dark:bg-stone-800 border-none rounded-2xl px-6 py-5 font-mono font-black text-4xl text-amber-600 outline-none focus:ring-2 focus:ring-amber-500 text-center" placeholder="0.00" />
+                 <input type="number" autoFocus value={cashReceived} onChange={e => setCashReceived(e.target.value)} className="w-full bg-stone-50 dark:bg-stone-800 border-none rounded-2xl px-6 py-5 font-mono font-black text-4xl text-black outline-none focus:ring-2 focus:ring-black text-center" placeholder="0.00" />
                  
                  {parseFloat(cashReceived) >= totals.total && (
-                   <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-2xl flex justify-between items-center border border-amber-100 dark:border-amber-800 animate-in fade-in slide-in-from-top-2">
-                      <span className="text-[10px] font-black uppercase text-amber-600">{lang === 'ar' ? 'الباقي' : 'Change'}</span>
-                      <span className="text-2xl font-black text-amber-700 dark:text-amber-400 font-mono">{(parseFloat(cashReceived) - totals.total).toFixed(2)} {t.currency}</span>
+                   <div className="bg-white border-2 border-black p-4 rounded-2xl flex justify-between items-center animate-in fade-in slide-in-from-top-2">
+                      <span className="text-[10px] font-black uppercase text-black">{lang === 'ar' ? 'الباقي' : 'Change'}</span>
+                      <span className="text-2xl font-black text-black font-mono">{(parseFloat(cashReceived) - totals.total).toFixed(2)} {t.currency}</span>
                    </div>
                  )}
 
@@ -613,7 +886,7 @@ const POSView: React.FC = () => {
               <button 
                 onClick={() => handleCheckout('CASH', undefined, parseFloat(cashReceived))}
                 disabled={parseFloat(cashReceived) < totals.total || isProcessing}
-                className="w-full mt-10 py-5 bg-stone-900 text-white rounded-[24px] font-black text-xl shadow-xl active:scale-95 transition-all disabled:opacity-30 flex items-center justify-center gap-3"
+                className="w-full mt-10 py-5 bg-black text-white rounded-[24px] font-black text-xl shadow-xl active:scale-95 transition-all disabled:opacity-30 flex items-center justify-center gap-3 border-2 border-black hover:bg-gray-900"
               >
                 {isProcessing ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} {t.completePayment}
               </button>
@@ -638,14 +911,14 @@ const POSView: React.FC = () => {
                  </div>
                  <div className="flex justify-between items-end">
                     <span className="text-xl font-bold">{totals.total.toFixed(2)} {t.currency}</span>
-                    <span className={`text-3xl font-black font-mono ${splitRemaining > 0 ? 'text-red-500' : 'text-green-500'}`}>{splitRemaining.toFixed(2)}</span>
+                    <span className={`text-3xl font-black font-mono ${splitRemaining > 0 ? 'text-black' : 'text-white'}`}>{splitRemaining.toFixed(2)}</span>
                  </div>
               </div>
               <div className="space-y-6">
-                 {([ {id: 'cash', icon: Banknote, color: 'green'}, {id: 'card', icon: CreditCard, color: 'blue'}, {id: 'mobile', icon: Smartphone, color: 'amber'} ] as any).map((method: any) => (
+                 {([ {id: 'cash', icon: Banknote, color: 'black'}, {id: 'card', icon: CreditCard, color: 'black'}, {id: 'mobile', icon: Smartphone, color: 'black'} ] as any).map((method: any) => (
                     <div key={method.id} className="space-y-1">
                        <label className="text-[10px] font-black uppercase text-stone-400 flex items-center gap-2">
-                          <method.icon size={14} className={`text-${method.color}-500`} /> {t[method.id as keyof typeof t] || method.id}
+                          <method.icon size={14} className="text-black" /> {t[method.id as keyof typeof t] || method.id}
                        </label>
                        <input type="number" value={(splitBreakdown as any)[method.id] || ''} onChange={e => setSplitBreakdown({...splitBreakdown, [method.id]: parseFloat(e.target.value) || 0})} className="w-full bg-stone-50 dark:bg-stone-800 border-none rounded-2xl px-6 py-4 font-mono font-bold text-lg outline-none focus:ring-2 focus:ring-stone-500" placeholder="0.00" />
                        
@@ -656,7 +929,7 @@ const POSView: React.FC = () => {
                                placeholder={lang === 'ar' ? 'مرجع بطاقة الصراف' : 'Card Reference'} 
                                value={splitBreakdown.card_reference || ''} 
                                onChange={e => setSplitBreakdown({...splitBreakdown, card_reference: e.target.value})}
-                               className="w-full bg-stone-100 dark:bg-stone-800/50 border-none rounded-xl px-4 py-2 text-xs font-bold outline-none focus:ring-1 focus:ring-blue-500"
+                               className="w-full bg-stone-100 dark:bg-stone-800/50 border-none rounded-xl px-4 py-2 text-xs font-bold outline-none focus:ring-1 focus:ring-black"
                             />
                          </div>
                        )}
@@ -666,7 +939,7 @@ const POSView: React.FC = () => {
               <button 
                 onClick={() => handleCheckout('SPLIT', splitBreakdown)}
                 disabled={Math.abs(splitRemaining) > 0.01 || isProcessing}
-                className="w-full mt-8 py-5 bg-stone-900 text-white rounded-[24px] font-black text-xl shadow-xl active:scale-95 transition-all disabled:opacity-30 flex items-center justify-center gap-3"
+                className="w-full mt-8 py-5 bg-black text-white rounded-[24px] font-black text-xl shadow-xl active:scale-95 transition-all disabled:opacity-30 flex items-center justify-center gap-3 border-2 border-black hover:bg-gray-900"
               >
                 {lang === 'ar' ? 'تأكيد الدفع المجزأ' : 'Complete Split'}
               </button>
@@ -680,7 +953,7 @@ const POSView: React.FC = () => {
            <div className="bg-white dark:bg-stone-900 rounded-[40px] max-w-2xl w-full p-8 shadow-2xl animate-in zoom-in-95 overflow-y-auto max-h-[90vh] custom-scrollbar">
               <div className="flex justify-between items-center mb-6">
                  <div className="flex items-center gap-4">
-                    <div className="p-4 bg-amber-50 dark:bg-amber-900/20 text-amber-600 rounded-2xl"><Coffee size={32}/></div>
+                    <div className="p-4 bg-white border-2 border-black text-black rounded-2xl"><Coffee size={32}/></div>
                     <h3 className="text-2xl font-black">{customizingItem.name}</h3>
                  </div>
                  <button onClick={() => setCustomizingItem(null)} className="p-2 hover:bg-stone-100 rounded-full transition-colors text-stone-400"><X size={32}/></button>
@@ -690,7 +963,7 @@ const POSView: React.FC = () => {
                     <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest">{lang === 'ar' ? 'الحجم' : 'Size'}</label>
                     <div className="grid grid-cols-3 gap-3">
                        {(['S', 'M', 'L'] as const).map(s => (
-                          <button key={s} onClick={() => setTempCustoms({...tempCustoms, size: s})} className={`py-5 rounded-3xl font-black transition-all border-2 ${tempCustoms.size === s ? 'bg-amber-600 text-white border-amber-600 shadow-lg' : 'bg-stone-50 dark:bg-stone-800 border-transparent text-stone-500'}`}>{s}</button>
+                          <button key={s} onClick={() => setTempCustoms({...tempCustoms, size: s})} className={`py-5 rounded-3xl font-black transition-all border-2 ${tempCustoms.size === s ? 'bg-black text-white border-black shadow-lg' : 'bg-stone-50 dark:bg-stone-800 border-transparent text-stone-500'}`}>{s}</button>
                        ))}
                     </div>
                  </div>
@@ -712,7 +985,7 @@ const POSView: React.FC = () => {
                         {(customizingItem as any).add_ons.map((ao: AddOn) => {
                           const isSelected = tempCustoms.selectedAddOns?.some(s => s.id === ao.id);
                           return (
-                            <button key={ao.id} onClick={() => toggleAddOn(ao)} className={`flex justify-between items-center px-4 py-4 rounded-3xl border-2 transition-all ${isSelected ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-500 text-amber-700 dark:text-amber-400 shadow-sm' : 'bg-stone-50 dark:bg-stone-800 border-transparent text-stone-500'}`}>
+                            <button key={ao.id} onClick={() => toggleAddOn(ao)} className={`flex justify-between items-center px-4 py-4 rounded-3xl border-2 transition-all ${isSelected ? 'bg-white border-black text-black shadow-sm' : 'bg-stone-50 dark:bg-stone-800 border-transparent text-stone-500'}`}>
                                <span className="text-xs font-bold">{ao.name}</span>
                                <span className="font-mono font-black text-[10px]">+{ao.price} {isSelected && <Check size={12} className="inline ml-1" />}</span>
                             </button>
@@ -721,7 +994,7 @@ const POSView: React.FC = () => {
                       </div>
                    </div>
                  )}
-                 <button onClick={() => addToCart(customizingItem, tempCustoms)} className="w-full py-5 bg-amber-600 text-white rounded-[32px] font-black text-xl shadow-xl active:scale-95 transition-all mt-4">
+                 <button onClick={() => addToCart(customizingItem, tempCustoms)} className="w-full py-5 bg-black text-white rounded-[32px] font-black text-xl shadow-xl active:scale-95 transition-all mt-4 border-2 border-black hover:bg-gray-900">
                     {lang === 'ar' ? 'إضافة للطلب' : 'Add to Order'}
                  </button>
               </div>
@@ -740,7 +1013,7 @@ const POSView: React.FC = () => {
                 placeholder={activeTab === 'HISTORY' ? t.history : t.searchProduct} 
                 value={activeTab === 'HISTORY' ? historySearch : searchTerm} 
                 onChange={e => activeTab === 'HISTORY' ? setHistorySearch(e.target.value) : setSearchTerm(e.target.value)} 
-                className="w-full bg-stone-50 dark:bg-stone-950 border-none rounded-[28px] px-16 py-5 font-bold outline-none focus:ring-2 focus:ring-amber-500 text-lg shadow-inner transition-all" 
+                className="w-full bg-white border-2 border-black rounded-[28px] px-16 py-5 font-bold outline-none focus:ring-2 focus:ring-black text-lg shadow-inner transition-all text-black placeholder-gray-500" 
                />
              </div>
              
@@ -762,10 +1035,10 @@ const POSView: React.FC = () => {
                      onChange={(e) => setDateRange({...dateRange, end: e.target.value})}
                    />
                    {(dateRange.start || dateRange.end) && (
-                     <button onClick={() => setDateRange({start: '', end: ''})} className="text-stone-400 hover:text-red-500"><X size={14}/></button>
+                     <button onClick={() => setDateRange({start: '', end: ''})} className="text-stone-400 hover:text-black"><X size={14}/></button>
                    )}
                  </div>
-                 <button onClick={fetchHistory} className="p-4 bg-stone-900 text-white rounded-2xl hover:bg-amber-600 transition-all"><RefreshCw size={20}/></button>
+                 <button onClick={fetchHistory} className="p-4 bg-stone-900 text-white rounded-2xl hover:bg-gray-900 transition-all border-2 border-black"><RefreshCw size={20}/></button>
                </div>
              )}
            </div>
@@ -774,9 +1047,10 @@ const POSView: React.FC = () => {
                 { id: 'ALL', label: t.all, icon: LayoutGrid }, 
                 { id: 'DRINKS', label: t.drinks, icon: Coffee }, 
                 { id: 'PACKAGED', label: t.packaged, icon: Box },
-                { id: 'HISTORY', label: t.history, icon: History }
+                { id: 'HISTORY', label: t.history, icon: History },
+                { id: 'RETURNS', label: lang === 'ar' ? 'المرتجعات' : 'Returns', icon: RefreshCw }
               ].map(tab => (
-                <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex items-center gap-3 px-8 py-4 rounded-[24px] text-sm font-black transition-all ${activeTab === tab.id ? 'bg-amber-600 text-white shadow-xl scale-105' : 'bg-stone-50 dark:bg-stone-950 text-stone-500 hover:bg-stone-100'}`}>
+                <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex items-center gap-3 px-8 py-4 rounded-[24px] text-sm font-black transition-all ${activeTab === tab.id ? 'bg-black text-white shadow-xl scale-105 border-2 border-black' : 'bg-white text-black border-2 border-black hover:bg-gray-100'}`}>
                   <tab.icon size={18}/> {tab.label}
                 </button>
               ))}
@@ -809,11 +1083,11 @@ const POSView: React.FC = () => {
                    <div className="flex items-center gap-8 w-full md:w-auto justify-between md:justify-end">
                       <div className="text-right">
                          <span className="block text-[10px] font-black text-stone-400 uppercase">{t.total}</span>
-                         <span className="text-2xl font-black text-amber-600 font-mono">{tx.total.toFixed(2)} <span className="text-xs opacity-50">{t.currency}</span></span>
+                         <span className="text-2xl font-black text-black font-mono">{tx.total.toFixed(2)} <span className="text-xs opacity-50">{t.currency}</span></span>
                       </div>
                       <button 
                         onClick={() => handlePrint(tx)}
-                        className="p-4 bg-stone-900 text-white rounded-2xl hover:bg-amber-600 transition-all active:scale-95 shadow-lg flex items-center gap-2"
+                        className="p-4 bg-stone-900 text-white rounded-2xl hover:bg-gray-900 transition-all active:scale-95 shadow-lg flex items-center gap-2 border-2 border-black"
                       >
                         <Printer size={20}/>
                         <span className="text-sm font-bold hidden sm:inline">{t.reprint}</span>
@@ -826,6 +1100,200 @@ const POSView: React.FC = () => {
                   <p className="font-bold">{t.emptyCart}</p>
                 </div>
               )}
+            </div>
+          ) : activeTab === 'RETURNS' ? (
+            <div className="space-y-8 animate-in slide-in-from-bottom-4 pb-20">
+              {/* Return Search Area */}
+              <div className="bg-white dark:bg-stone-900 p-8 rounded-[40px] border border-stone-200 dark:border-stone-800 shadow-sm">
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="p-3 bg-white border-2 border-black text-black rounded-2xl">
+                    <RefreshCw size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black">{lang === 'ar' ? 'إجراء مرتجع' : 'Process Return'}</h3>
+                    <p className="text-xs text-stone-400 font-bold uppercase tracking-widest">{lang === 'ar' ? 'ابحث عن رقم الفاتورة للبدء' : 'Search invoice number to begin'}</p>
+                  </div>
+                </div>
+                
+                <div className="flex gap-4">
+                  <div className="relative flex-1">
+                    <Search className={`absolute ${t.dir === 'rtl' ? 'right-6' : 'left-6'} top-1/2 -translate-y-1/2 text-stone-400`} size={20}/>
+                    <input 
+                      type="text" 
+                      placeholder={lang === 'ar' ? 'أدخل رقم الفاتورة (مثال: INV-20260130-0001)' : 'Enter Invoice Number (e.g., INV-20260130-0001)'}
+                      value={returnInvoiceSearch}
+                      onChange={e => setReturnInvoiceSearch(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && searchInvoice()}
+                      className="w-full bg-white border-2 border-black rounded-[24px] px-14 py-4 font-bold outline-none focus:ring-2 focus:ring-black shadow-inner text-black placeholder-gray-500"
+                    />
+                  </div>
+                  <button 
+                    onClick={searchInvoice}
+                    disabled={searchingInvoice || !returnInvoiceSearch.trim()}
+                    className="px-8 bg-black text-white rounded-[24px] font-bold hover:bg-gray-900 transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2 border-2 border-black"
+                  >
+                    {searchingInvoice ? <Loader2 size={20} className="animate-spin" /> : <Search size={20} />}
+                    {lang === 'ar' ? 'بحث' : 'Search'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Selected Invoice Details */}
+              {selectedInvoice && (
+                <div className="bg-white dark:bg-stone-900 rounded-[40px] border border-stone-200 dark:border-stone-800 shadow-xl overflow-hidden animate-in zoom-in-95">
+                  <div className="bg-stone-900 text-white p-6 flex justify-between items-center">
+                    <div className="flex items-center gap-4">
+                      <Receipt size={24} className="text-black" />
+                      <div>
+                        <h4 className="font-black text-lg">{selectedInvoice.id}</h4>
+                        <span className="text-[10px] opacity-60 font-black uppercase">{new Date(selectedInvoice.created_at).toLocaleString()}</span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="block text-[10px] opacity-60 font-black uppercase">{t.total}</span>
+                      <span className="text-xl font-black text-black font-mono">{selectedInvoice.total.toFixed(2)} {t.currency}</span>
+                    </div>
+                  </div>
+
+                  <div className="p-8">
+                    <h5 className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-4">{lang === 'ar' ? 'اختر الأصناف المراد إرجاعها' : 'Select items to return'}</h5>
+                    <div className="space-y-4">
+                      {selectedInvoice.items.map((item: any) => {
+                        const isSelected = itemsToReturn.some(i => i.cartId === item.cartId);
+                        const returnItem = itemsToReturn.find(i => i.cartId === item.cartId);
+                        
+                        return (
+                          <div key={item.cartId} className={`p-5 rounded-[28px] border-2 transition-all ${isSelected ? 'border-black bg-white/30 dark:bg-black/10' : 'border-stone-100 dark:border-stone-800'}`}>
+                            <div className="flex items-center justify-between gap-4">
+                              <div className="flex items-center gap-4 flex-1">
+                                <button 
+                                  onClick={() => toggleReturnItem(item)}
+                                  className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all ${isSelected ? 'bg-black text-white' : 'bg-stone-100 dark:bg-stone-800 text-stone-400'}`}
+                                >
+                                  {isSelected ? <Check size={18} strokeWidth={3} /> : <Plus size={18} strokeWidth={3} />}
+                                </button>
+                                <div>
+                                  <p className="font-bold text-sm">{item.name}</p>
+                                  <p className="text-[10px] text-stone-400 font-black">{item.quantity} x {item.price.toFixed(2)} {t.currency}</p>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <p className="font-black text-black font-mono">{(item.price * item.quantity).toFixed(2)}</p>
+                              </div>
+                            </div>
+                            
+                            {isSelected && (
+                              <div className="mt-4 pt-4 border-t border-black/50 dark:border-black/30 animate-in slide-in-from-top-2">
+                                <label className="text-[10px] font-black text-black uppercase mb-2 block">{lang === 'ar' ? 'سبب الإرجاع' : 'Return Reason'}</label>
+                                <select 
+                                  value={returnItem?.return_reason || ''}
+                                  onChange={(e) => updateReturnReason(item.cartId, e.target.value)}
+                                  className="w-full bg-white dark:bg-stone-900 border-2 border-black rounded-xl px-4 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-black"
+                                >
+                                  <option value="">{lang === 'ar' ? 'اختر السبب...' : 'Select reason...'}</option>
+                                  <option value="Customer Dissatisfaction">{lang === 'ar' ? 'عدم رضا العميل' : 'Customer Dissatisfaction'}</option>
+                                  <option value="Wrong Item">{lang === 'ar' ? 'صنف خاطئ' : 'Wrong Item'}</option>
+                                  <option value="Quality Issue">{lang === 'ar' ? 'مشكلة في الجودة' : 'Quality Issue'}</option>
+                                  <option value="Order Cancelled">{lang === 'ar' ? 'إلغاء الطلب' : 'Order Cancelled'}</option>
+                                  <option value="Other">{lang === 'ar' ? 'أخرى' : 'Other'}</option>
+                                </select>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {itemsToReturn.length > 0 && (
+                      <div className="mt-8 pt-8 border-t border-stone-100 dark:border-stone-800">
+                        <div className="flex justify-between items-center mb-6">
+                          <div>
+                            <span className="text-[10px] font-black text-stone-400 uppercase">{lang === 'ar' ? 'إجمالي مبلغ الاسترداد' : 'Total Refund Amount'}</span>
+                            <h4 className="text-3xl font-black text-stone-900 dark:text-white font-mono">
+                              {itemsToReturn.reduce((sum, item) => sum + (item.price * item.quantity), 0).toFixed(2)}
+                              <span className="text-xs ml-2 opacity-50 uppercase">{t.currency}</span>
+                            </h4>
+                          </div>
+                          <button 
+                            onClick={submitReturnRequest}
+                            disabled={isProcessing}
+                            className="px-10 py-5 bg-black text-white rounded-[24px] font-black text-lg shadow-xl shadow-black/20 hover:bg-gray-900 active:scale-95 transition-all flex items-center gap-3 border-2 border-black"
+                          >
+                            {isProcessing ? <Loader2 size={24} className="animate-spin" /> : <RefreshCw size={24} />}
+                            {lang === 'ar' ? 'تقديم طلب استرداد' : 'Submit Refund Request'}
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-black font-bold text-center bg-white border border-black py-2 rounded-lg">
+                          {lang === 'ar' ? '* يتطلب هذا الإجراء موافقة المدير' : '* This action requires manager approval'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Recent Return Requests */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between px-4">
+                  <h4 className="text-sm font-black text-stone-400 uppercase tracking-widest">{lang === 'ar' ? 'المرتجعات الأخيرة' : 'Recent Returns'}</h4>
+                  <button onClick={fetchReturnRequests} className="text-stone-400 hover:text-black transition-colors"><RefreshCw size={18} /></button>
+                </div>
+                
+                {isLoading && returnRequests.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 opacity-30">
+                    <Loader2 size={32} className="animate-spin" />
+                  </div>
+                ) : returnRequests.length > 0 ? (
+                  returnRequests.map(req => (
+                    <div key={req.id} className="bg-white dark:bg-stone-900 p-6 rounded-[32px] border border-stone-200 dark:border-stone-800 shadow-sm flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-4">
+                        <div className={`p-3 rounded-2xl ${
+                          req.status === 'APPROVED' ? 'bg-white text-black border border-black' : 
+                        req.status === 'REJECTED' ? 'bg-black text-white' : 
+                        'bg-white text-black border border-black'
+                        }`}>
+                          {req.status === 'APPROVED' ? <CheckCircle2 size={24} /> : 
+                           req.status === 'REJECTED' ? <X size={24} /> : 
+                           <Clock size={24} />}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h5 className="font-black text-sm">{req.invoice_number}</h5>
+                            <span className={`px-2 py-0.5 rounded-[6px] text-[8px] font-black uppercase ${
+                              req.status === 'APPROVED' ? 'bg-white text-black border border-black' : 
+                              req.status === 'REJECTED' ? 'bg-black text-white' : 
+                              'bg-white text-black border border-black'
+                            }`}>{req.status}</span>
+                          </div>
+                          <p className="text-[10px] text-stone-400 font-bold mt-1">
+                            {new Date(req.created_at).toLocaleString()} • {req.items.length} {t.items}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <span className="block text-[8px] font-black text-stone-400 uppercase">{lang === 'ar' ? 'المبلغ' : 'Amount'}</span>
+                          <span className="text-lg font-black text-black font-mono">{req.total_refund_amount.toFixed(2)}</span>
+                        </div>
+                        {req.status === 'APPROVED' && (
+                          <button 
+                            onClick={() => handlePrintReturn(req)}
+                            className="p-3 bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400 rounded-xl hover:bg-stone-200 transition-all active:scale-95"
+                            title={lang === 'ar' ? 'طباعة الإيصال' : 'Print Receipt'}
+                          >
+                            <Printer size={18} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="bg-stone-50 dark:bg-stone-950/50 border-2 border-dashed border-stone-200 dark:border-stone-800 rounded-[32px] p-10 text-center opacity-30">
+                    <History size={48} className="mx-auto mb-4" />
+                    <p className="font-bold text-sm">{lang === 'ar' ? 'لا توجد طلبات مرتجعة' : 'No return requests found'}</p>
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-6 animate-in fade-in duration-500">
@@ -841,8 +1309,8 @@ const POSView: React.FC = () => {
                    <div className="flex-1 flex flex-col px-2">
                       <h4 className="font-black text-stone-800 dark:text-stone-100 text-base line-clamp-2 mb-4 leading-tight text-center">{item.name}</h4>
                       <div className="mt-auto flex justify-between items-center pt-4 border-t border-stone-50 dark:border-stone-800">
-                         <span className="text-amber-600 font-black text-2xl font-mono">{item.price}<span className="text-xs font-bold ml-1 opacity-50 uppercase">{t.currency}</span></span>
-                         <div className="w-12 h-12 bg-stone-50 dark:bg-stone-950 rounded-[20px] flex items-center justify-center group-hover:bg-amber-600 group-hover:text-white transition-colors"><Plus size={22} strokeWidth={3}/></div>
+                         <span className="text-black font-black text-2xl font-mono">{item.price}<span className="text-xs font-bold ml-1 opacity-50 uppercase">{t.currency}</span></span>
+                         <div className="w-12 h-12 bg-white border-2 border-black rounded-[20px] flex items-center justify-center group-hover:bg-black group-hover:text-white transition-colors"><Plus size={22} strokeWidth={3}/></div>
                       </div>
                    </div>
                  </button>
@@ -856,7 +1324,7 @@ const POSView: React.FC = () => {
       <aside className={`fixed inset-y-0 ${t.dir === 'rtl' ? 'left-0' : 'right-0'} z-[100] w-full sm:w-[450px] lg:w-[420px] transform transition-all duration-500 ease-in-out lg:static lg:translate-x-0 ${showMobileCart ? 'translate-x-0' : (t.dir === 'rtl' ? '-translate-x-full' : 'translate-x-full')} flex flex-col bg-white dark:bg-stone-900 lg:rounded-[60px] shadow-2xl border border-stone-200 dark:border-stone-800 overflow-hidden`}>
          <div className="p-8 border-b flex justify-between items-center bg-white/50 dark:bg-stone-900/50 backdrop-blur-md">
             <div className="flex items-center gap-4">
-               <div className="p-4 bg-amber-50 dark:bg-amber-900/20 text-amber-600 rounded-[24px]"><ShoppingCart size={28}/></div>
+               <div className="p-4 bg-white border-2 border-black text-black rounded-[24px]"><ShoppingCart size={28}/></div>
                <div><h3 className="text-xl font-black">{t.bill}</h3><span className="text-[11px] font-black text-stone-400 uppercase">{cart.length} {t.items}</span></div>
             </div>
             <button onClick={() => setShowMobileCart(false)} className="lg:hidden p-3 hover:bg-stone-100 rounded-full"><X size={32}/></button>
@@ -870,8 +1338,8 @@ const POSView: React.FC = () => {
                     <h5 className="font-bold text-sm truncate">{item.name}</h5>
                     {item.selectedCustomizations && (
                       <div className="flex flex-wrap gap-1 mt-1">
-                         <span className="px-1.5 py-0.5 bg-amber-50 text-amber-600 rounded text-[8px] font-black uppercase">{item.selectedCustomizations.size}</span>
-                         {item.selectedCustomizations.selectedAddOns?.map((ao: AddOn) => <span key={ao.id} className="px-1.5 py-0.5 bg-green-50 text-green-600 rounded text-[8px] font-black uppercase">+{ao.name}</span>)}
+                         <span className="px-1.5 py-0.5 bg-white border border-black text-black rounded text-[8px] font-black uppercase">{item.selectedCustomizations.size}</span>
+                         {item.selectedCustomizations.selectedAddOns?.map((ao: AddOn) => <span key={ao.id} className="px-1.5 py-0.5 bg-white border border-black text-black rounded text-[8px] font-black uppercase">+{ao.name}</span>)}
                       </div>
                     )}
                  </div>
@@ -880,7 +1348,7 @@ const POSView: React.FC = () => {
                     <span className="w-4 text-center font-black font-mono text-xs">{item.quantity}</span>
                     <button onClick={() => updateQuantity((item as any).cartId, 1)} className="w-8 h-8 flex items-center justify-center hover:bg-white rounded-lg"><Plus size={14} strokeWidth={3}/></button>
                  </div>
-                 <button onClick={() => removeFromCart((item as any).cartId)} className="text-stone-300 hover:text-red-500 p-2"><Trash2 size={20}/></button>
+                 <button onClick={() => removeFromCart((item as any).cartId)} className="text-stone-300 hover:text-black p-2"><Trash2 size={20}/></button>
               </div>
             )) : (
               <div className="h-full flex flex-col items-center justify-center opacity-30">
@@ -897,26 +1365,26 @@ const POSView: React.FC = () => {
             <div className="flex justify-between items-center mb-8">
                <span className="text-2xl font-black uppercase tracking-tight">{t.total}</span>
                <div className="text-right">
-                 <span className="text-4xl font-black text-amber-500 font-mono">{totals.total.toFixed(2)}</span>
+                 <span className="text-4xl font-black text-black font-mono">{totals.total.toFixed(2)}</span>
                  <span className="text-xs font-bold ml-2 opacity-50 uppercase">{t.currency}</span>
                </div>
             </div>
             
             <div className="grid grid-cols-4 gap-3">
-               <button onClick={() => setShowCashModal(true)} disabled={cart.length === 0 || isProcessing} className="flex flex-col items-center justify-center gap-2 h-20 rounded-3xl bg-stone-800 hover:bg-stone-700 active:scale-95 transition-all disabled:opacity-30">
-                  <Banknote size={20} className="text-green-500"/>
+               <button onClick={() => setShowCashModal(true)} disabled={cart.length === 0 || isProcessing} className="flex flex-col items-center justify-center gap-2 h-20 rounded-3xl bg-white border-2 border-black text-black hover:bg-gray-100 active:scale-95 transition-all disabled:opacity-30">
+                  <Banknote size={20} className="text-black"/>
                   <span className="text-[8px] font-black uppercase">{t.cash}</span>
                </button>
-               <button onClick={() => setShowCardInput(true)} disabled={cart.length === 0 || isProcessing} className="flex flex-col items-center justify-center gap-2 h-20 rounded-3xl bg-stone-800 hover:bg-stone-700 active:scale-95 transition-all disabled:opacity-30">
-                  <CreditCard size={20} className="text-blue-500"/>
+               <button onClick={() => setShowCardInput(true)} disabled={cart.length === 0 || isProcessing} className="flex flex-col items-center justify-center gap-2 h-20 rounded-3xl bg-white border-2 border-black text-black hover:bg-gray-100 active:scale-95 transition-all disabled:opacity-30">
+                  <CreditCard size={20} className="text-black"/>
                   <span className="text-[8px] font-black uppercase">{t.card}</span>
                </button>
-               <button onClick={() => handleCheckout('MOBILE')} disabled={cart.length === 0 || isProcessing} className="flex flex-col items-center justify-center gap-2 h-20 rounded-3xl bg-stone-800 hover:bg-stone-700 active:scale-95 transition-all disabled:opacity-30">
-                  <Smartphone size={20} className="text-amber-500"/>
+               <button onClick={() => handleCheckout('MOBILE')} disabled={cart.length === 0 || isProcessing} className="flex flex-col items-center justify-center gap-2 h-20 rounded-3xl bg-white border-2 border-black text-black hover:bg-gray-100 active:scale-95 transition-all disabled:opacity-30">
+                  <Smartphone size={20} className="text-black"/>
                   <span className="text-[8px] font-black uppercase">{lang === 'ar' ? 'هاتف' : 'Mobile'}</span>
                </button>
-               <button onClick={() => setShowSplitModal(true)} disabled={cart.length === 0 || isProcessing} className="flex flex-col items-center justify-center gap-2 h-20 rounded-3xl bg-amber-600 hover:bg-amber-500 active:scale-95 transition-all disabled:opacity-30">
-                  <Scissors size={20}/>
+               <button onClick={() => setShowSplitModal(true)} disabled={cart.length === 0 || isProcessing} className="flex flex-col items-center justify-center gap-2 h-20 rounded-3xl bg-black text-white border-2 border-black hover:bg-gray-900 active:scale-95 transition-all disabled:opacity-30">
+                  <Scissors size={20} className="text-white"/>
                   <span className="text-[8px] font-black uppercase">{lang === 'ar' ? 'مجزأ' : 'Split'}</span>
                </button>
             </div>
@@ -927,9 +1395,9 @@ const POSView: React.FC = () => {
       {showSuccess && lastTransaction && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-2xl z-[300] flex flex-col items-center justify-center animate-in zoom-in-95">
           <div className="bg-white dark:bg-stone-900 p-8 md:p-12 rounded-[64px] text-center shadow-2xl border border-white/20 relative overflow-hidden max-w-lg w-full mx-4">
-            <div className="absolute top-0 left-0 w-full h-3 bg-green-500"></div>
-            <div className="bg-green-100 dark:bg-green-900/30 p-6 rounded-full inline-block mb-6 animate-bounce-slow">
-              <CheckCircle2 size={64} className="text-green-600 dark:text-green-400" />
+            <div className="absolute top-0 left-0 w-full h-3 bg-black"></div>
+            <div className="bg-white border-2 border-black p-6 rounded-full inline-block mb-6 animate-bounce-slow">
+              <CheckCircle2 size={64} className="text-black" />
             </div>
             <h2 className="text-3xl font-black mb-2 text-stone-800 dark:text-white">{lang === 'ar' ? 'تم تأكيد الطلب!' : 'Order Confirmed!'}</h2>
             <div className="bg-stone-50 dark:bg-stone-800/50 p-5 rounded-[28px] mb-6 space-y-3 text-xs font-bold text-stone-600 dark:text-stone-300">
@@ -943,7 +1411,7 @@ const POSView: React.FC = () => {
                </div>
                
                {lastTransaction.change_amount > 0 && (
-                 <div className="flex justify-between items-center border-t border-dashed border-stone-200 dark:border-stone-700 pt-3 text-amber-600">
+                 <div className="flex justify-between items-center border-t border-dashed border-stone-200 dark:border-stone-700 pt-3 text-black">
                     <span className="opacity-60">{lang === 'ar' ? 'الباقي' : 'Change'}</span>
                     <span className="text-lg font-black">{lastTransaction.change_amount.toFixed(2)} {t.currency}</span>
                  </div>
@@ -955,7 +1423,7 @@ const POSView: React.FC = () => {
                </div>
 
                {lastTransaction.card_reference && (
-                 <div className="flex justify-between items-center border-t border-dashed border-stone-200 dark:border-stone-700 pt-3 text-blue-600">
+                 <div className="flex justify-between items-center border-t border-dashed border-stone-200 dark:border-stone-700 pt-3 text-black">
                     <span className="opacity-60">{lang === 'ar' ? 'المرجع' : 'Reference'}</span>
                     <span className="font-mono">{lastTransaction.card_reference}</span>
                  </div>
@@ -970,9 +1438,76 @@ const POSView: React.FC = () => {
               </button>
               <button 
                 onClick={() => { setShowSuccess(false); setLastTransaction(null); }}
-                className="py-4 bg-amber-600 text-white rounded-2xl font-bold shadow-lg hover:bg-amber-700 transition-all active:scale-95"
+                className="py-4 bg-black text-white rounded-2xl font-bold shadow-lg hover:bg-gray-900 transition-all active:scale-95 border-2 border-black"
               >
                 {lang === 'ar' ? 'طلب جديد' : 'New Order'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Return Success Modal */}
+      {showReturnSuccess && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-2xl z-[300] flex flex-col items-center justify-center animate-in zoom-in-95">
+          <div className="bg-white dark:bg-stone-900 p-12 rounded-[64px] text-center shadow-2xl border border-white/20 relative overflow-hidden max-w-lg w-full">
+            <div className="absolute top-0 left-0 w-full h-3 bg-black"></div>
+            <div className="bg-white border-2 border-black p-6 rounded-full inline-block mb-6 animate-bounce-slow">
+              <CheckCircle2 size={64} className="text-black" />
+            </div>
+            <h2 className="text-3xl font-black mb-2 text-stone-800 dark:text-white">{lang === 'ar' ? 'تمت الموافقة على المرتجع!' : 'Return Approved!'}</h2>
+            <p className="text-stone-500 mb-8 font-bold">{lang === 'ar' ? 'تمت معالجة الاسترداد وتحديث المخزون بنجاح.' : 'Refund processed and inventory updated successfully.'}</p>
+            <button 
+              onClick={() => setShowReturnSuccess(false)}
+              className="w-full py-4 bg-black text-white rounded-2xl font-bold shadow-lg hover:bg-gray-900 transition-all active:scale-95 border-2 border-black"
+            >
+              {lang === 'ar' ? 'إغلاق' : 'Close'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Manager Approval Modal for Returns */}
+      {showManagerApprovalModal && pendingReturnRequest && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[400] flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-stone-900 rounded-[48px] max-w-md w-full p-10 shadow-2xl animate-in zoom-in-95 border border-stone-200 dark:border-stone-800">
+            <div className="text-center mb-8">
+              <div className="w-20 h-20 bg-white border-2 border-black text-black rounded-3xl flex items-center justify-center mx-auto mb-6">
+                <UserIcon size={40} />
+              </div>
+              <h3 className="text-2xl font-black mb-2">{lang === 'ar' ? 'موافقة المدير مطلوبة' : 'Manager Approval Required'}</h3>
+              <p className="text-xs text-stone-400 font-bold uppercase tracking-widest">{lang === 'ar' ? 'يرجى إدخال رمز المدير أو الموافقة للمتابعة' : 'Please provide manager approval to proceed'}</p>
+            </div>
+
+            <div className="bg-stone-50 dark:bg-stone-950 p-6 rounded-[32px] mb-8 border border-stone-100 dark:border-stone-800">
+              <div className="flex justify-between items-center mb-4">
+                <span className="text-[10px] font-black text-stone-400 uppercase">{lang === 'ar' ? 'إجمالي الاسترداد' : 'Refund Amount'}</span>
+                <span className="text-2xl font-black text-black font-mono">{pendingReturnRequest.total_refund_amount.toFixed(2)} {t.currency}</span>
+              </div>
+              <div className="space-y-2">
+                {pendingReturnRequest.items.map((item: any) => (
+                  <div key={item.cartId} className="flex justify-between text-[10px] font-bold">
+                    <span className="text-stone-500">{item.name} x {item.quantity}</span>
+                    <span className="text-stone-900 dark:text-white">{(item.price * item.quantity).toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <button 
+                onClick={() => approveRefund(pendingReturnRequest.id, false)}
+                disabled={isProcessing}
+                className="py-4 bg-white border-2 border-black text-black rounded-2xl font-bold hover:bg-gray-100 transition-all active:scale-95 disabled:opacity-50"
+              >
+                {lang === 'ar' ? 'رفض' : 'Reject'}
+              </button>
+              <button 
+                onClick={() => approveRefund(pendingReturnRequest.id, true)}
+                disabled={isProcessing}
+                className="py-4 bg-black text-white rounded-2xl font-black shadow-xl hover:bg-gray-900 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 border-2 border-black"
+              >
+                {isProcessing ? <Loader2 size={20} className="animate-spin" /> : <CheckCircle2 size={20} />}
+                {lang === 'ar' ? 'موافقة' : 'Approve'}
               </button>
             </div>
           </div>

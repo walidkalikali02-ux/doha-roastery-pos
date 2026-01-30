@@ -135,6 +135,37 @@ export interface Transaction {
   received_amount?: number;
   change_amount?: number;
   created_at?: string;
+  is_returned?: boolean;
+  return_id?: string;
+}
+
+export type RefundStatus = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED';
+export type RefundType = 'FULL' | 'PARTIAL';
+
+export interface ReturnItem {
+  id: string; // Product/Inventory ID
+  cartId: string; // cartId from the original transaction items
+  name: string;
+  quantity: number;
+  price: number;
+  type: 'PACKAGED_COFFEE' | 'BEVERAGE' | 'INGREDIENT';
+  return_reason: string;
+  is_inventory_updated: boolean;
+}
+
+export interface ReturnRequest {
+  id: string;
+  invoice_number: string;
+  items: ReturnItem[];
+  total_refund_amount: number;
+  refund_type: RefundType;
+  status: RefundStatus;
+  manager_id?: string;
+  manager_name?: string;
+  requested_by_id: string;
+  requested_by_name: string;
+  created_at: string;
+  updated_at?: string;
 }
 
 export interface PackagingUnit {
