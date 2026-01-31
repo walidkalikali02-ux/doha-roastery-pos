@@ -266,3 +266,29 @@ export interface LoginCredentials {
   password: string;
   rememberMe?: boolean;
 }
+
+export interface Shift {
+  id: string;
+  cashier_id: string;
+  cashier_name: string;
+  start_time: string;
+  end_time?: string;
+  initial_cash: number;
+  total_cash_sales: number;
+  total_cash_returns: number;
+  expected_cash?: number;
+  actual_cash?: number;
+  status: 'OPEN' | 'CLOSED';
+  notes?: string;
+}
+
+export interface CashMovement {
+  id: string;
+  shift_id: string;
+  type: 'IN' | 'OUT';
+  amount: number;
+  reason: string;
+  created_at: string;
+  created_by_id: string;
+  created_by_name: string;
+}

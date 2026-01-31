@@ -153,7 +153,7 @@ const AppContent: React.FC = () => {
   if (isLoading) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-stone-50 dark:bg-stone-950">
-        <Loader2 className="w-12 h-12 text-amber-600 animate-spin" />
+        <Loader2 className="w-12 h-12 text-black dark:text-white animate-spin" />
       </div>
     );
   }
@@ -161,11 +161,11 @@ const AppContent: React.FC = () => {
   if (error === "Account disabled") {
     return (
       <div className="h-screen w-screen flex flex-col items-center justify-center bg-stone-50 dark:bg-stone-950 p-8 text-center" dir={t.dir}>
-        <div className="bg-red-100 dark:bg-red-900/30 p-6 rounded-full text-red-600 dark:text-red-400 mb-6">
+        <div className="bg-stone-100 dark:bg-stone-800 p-6 rounded-full text-black dark:text-white mb-6 border-2 border-black dark:border-white">
           <AlertTriangle size={64} />
         </div>
         <h1 className="text-3xl font-bold mb-4">{t.accountDisabled}</h1>
-        <button onClick={() => window.location.reload()} className="bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 px-8 py-3 rounded-2xl font-bold">
+        <button onClick={() => window.location.reload()} className="bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 px-8 py-3 rounded-2xl font-bold border-2 border-transparent hover:border-black dark:hover:border-white transition-all">
           {t.backToLogin}
         </button>
       </div>
@@ -180,7 +180,7 @@ const AppContent: React.FC = () => {
     const activeItem = allMenuItems.find(i => i.id === activeTab);
     return (
       <nav className="flex items-center gap-2 text-xs md:text-sm text-stone-500 dark:text-stone-400 mb-4 transition-all overflow-x-auto no-scrollbar whitespace-nowrap">
-        <button onClick={() => handleTabChange('dashboard')} className="hover:text-amber-600 dark:hover:text-amber-500 transition-colors">
+        <button onClick={() => handleTabChange('dashboard')} className="hover:text-black dark:hover:text-white transition-colors">
           {t.home}
         </button>
         {activeTab !== 'dashboard' && (
@@ -188,7 +188,7 @@ const AppContent: React.FC = () => {
             {t.dir === 'rtl' ? <ChevronLeft size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
             <button 
               onClick={() => setActiveDetailId(null)}
-              className={`hover:text-amber-600 dark:hover:text-amber-500 transition-colors ${!activeDetailId ? 'font-bold text-stone-800 dark:text-stone-200' : ''}`}
+              className={`hover:text-black dark:hover:text-white transition-colors ${!activeDetailId ? 'font-bold text-stone-800 dark:text-stone-200' : ''}`}
             >
               {activeItem?.label}
             </button>
@@ -210,7 +210,7 @@ const AppContent: React.FC = () => {
     <div className="relative">
       <button 
         onClick={() => setShowQuickActions(!showQuickActions)}
-        className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-xs md:text-sm font-bold shadow-lg transition-all active:scale-95"
+        className="flex items-center gap-2 bg-black hover:bg-stone-800 dark:bg-white dark:text-black dark:hover:bg-stone-200 text-white px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-xs md:text-sm font-bold shadow-lg transition-all active:scale-95 border-2 border-transparent hover:border-black dark:hover:border-white"
       >
         <Zap size={16} fill="currentColor" />
         <span className="hidden sm:inline">{t.quickActions}</span>
@@ -218,21 +218,21 @@ const AppContent: React.FC = () => {
       {showQuickActions && (
         <>
           <div className="fixed inset-0 z-[60]" onClick={() => setShowQuickActions(false)} />
-          <div className={`absolute top-full mt-2 ${t.dir === 'rtl' ? 'left-0' : 'right-0'} w-48 bg-white dark:bg-stone-900 rounded-2xl shadow-2xl border border-stone-100 dark:border-stone-800 p-2 z-[70] animate-in fade-in zoom-in-95 duration-200`}>
+          <div className={`absolute top-full mt-2 ${t.dir === 'rtl' ? 'left-0' : 'right-0'} w-48 bg-white dark:bg-stone-900 rounded-2xl shadow-2xl border border-stone-200 dark:border-stone-700 p-2 z-[70] animate-in fade-in zoom-in-95 duration-200`}>
             {userRole !== UserRole.CASHIER && userRole !== UserRole.WAREHOUSE_STAFF && (
               <button onClick={() => { handleTabChange('roasting'); setShowQuickActions(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors text-right">
-                <Flame size={16} className="text-orange-500" />
+                <Flame size={16} className="text-black dark:text-white" />
                 <span className="text-sm font-medium dark:text-stone-200">{t.newBatch}</span>
               </button>
             )}
             {userRole !== UserRole.ROASTER && userRole !== UserRole.WAREHOUSE_STAFF && (
               <button onClick={() => { handleTabChange('pos'); setShowQuickActions(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors text-right">
-                <ShoppingCart size={16} className="text-blue-500" />
+                <ShoppingCart size={16} className="text-black dark:text-white" />
                 <span className="text-sm font-medium dark:text-stone-200">{t.newSale}</span>
               </button>
             )}
             <button onClick={() => { handleTabChange('inventory'); setShowQuickActions(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors text-right">
-              <ClipboardList size={16} className="text-green-500" />
+              <ClipboardList size={16} className="text-black dark:text-white" />
               <span className="text-sm font-medium dark:text-stone-200">{t.inventoryReport}</span>
             </button>
           </div>
@@ -247,15 +247,15 @@ const AppContent: React.FC = () => {
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-in fade-in duration-300">
           <div className="bg-white dark:bg-stone-900 rounded-[32px] p-8 max-md w-full shadow-2xl border border-stone-200 dark:border-stone-800 text-center">
             <div className="flex justify-center mb-6">
-              <div className="bg-amber-100 dark:bg-amber-900/30 p-4 rounded-full text-amber-600 dark:text-amber-400">
+              <div className="bg-stone-100 dark:bg-stone-800 p-4 rounded-full text-black dark:text-white border-2 border-black dark:border-white">
                 <Clock size={48} className="animate-pulse" />
               </div>
             </div>
             <h3 className="text-2xl font-bold text-stone-900 dark:text-stone-100 mb-4">{t.sessionTimeout}</h3>
             <p className="text-stone-600 dark:text-stone-400 mb-8 leading-relaxed">{t.sessionWarning}</p>
             <div className="flex flex-col gap-3">
-              <button onClick={() => { setShowSessionWarning(false); refreshSession(); }} className="w-full py-4 bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 rounded-2xl font-bold shadow-xl hover:bg-black dark:hover:bg-white transition-all active:scale-95">{t.stayLoggedIn}</button>
-              <button onClick={() => { logout(); setShowSessionWarning(false); }} className="w-full py-4 text-stone-500 hover:text-red-500 font-bold transition-colors">{t.logout}</button>
+              <button onClick={() => { setShowSessionWarning(false); refreshSession(); }} className="w-full py-4 bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 rounded-2xl font-bold shadow-xl hover:bg-black dark:hover:bg-white transition-all active:scale-95 border-2 border-transparent hover:border-black dark:hover:border-white">{t.stayLoggedIn}</button>
+              <button onClick={() => { logout(); setShowSessionWarning(false); }} className="w-full py-4 text-stone-500 hover:text-black dark:hover:text-white font-bold transition-colors">{t.logout}</button>
             </div>
           </div>
         </div>
@@ -265,7 +265,7 @@ const AppContent: React.FC = () => {
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
           <div className="bg-white dark:bg-stone-900 rounded-[32px] p-8 max-w-md w-full shadow-2xl border border-stone-200 dark:border-stone-800">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold flex items-center gap-2 text-stone-900 dark:text-stone-100"><Keyboard className="text-amber-600" />{t.shortcuts}</h3>
+              <h3 className="text-xl font-bold flex items-center gap-2 text-stone-900 dark:text-stone-100"><Keyboard className="text-black dark:text-white" />{t.shortcuts}</h3>
               <button onClick={() => setShowShortcuts(false)} className="p-2 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-full transition-colors"><X size={20} /></button>
             </div>
             <div className="space-y-4">
@@ -290,7 +290,7 @@ const AppContent: React.FC = () => {
       <aside className={`fixed inset-y-0 ${t.dir === 'rtl' ? 'right-0' : 'left-0'} z-50 transform transition-all duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-auto ${isMobileMenuOpen ? 'translate-x-0' : (t.dir === 'rtl' ? 'translate-x-full' : '-translate-x-full')} bg-stone-900 text-stone-200 flex-shrink-0 flex flex-col shadow-xl ${isSidebarOpen ? 'w-64' : 'w-20'}`}>
         <div className="p-4 flex items-center justify-between border-b border-stone-800">
           <div className={`flex items-center gap-3 overflow-hidden transition-all ${!isSidebarOpen && 'opacity-0 w-0 lg:hidden'}`}>
-            <div className="bg-amber-600 p-2 rounded-lg"><Coffee className="w-6 h-6 text-white" /></div>
+            <div className="bg-white p-2 rounded-lg"><Coffee className="w-6 h-6 text-black" /></div>
             <span className="font-bold text-xl whitespace-nowrap">{t.appName}</span>
           </div>
           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-1 hover:bg-stone-800 rounded hidden lg:block transition-colors">{isSidebarOpen ? (t.dir === 'rtl' ? <ChevronRight size={20} /> : <ChevronLeft size={20} />) : <Menu size={20} />}</button>
@@ -301,7 +301,7 @@ const AppContent: React.FC = () => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
             return (
-              <button key={item.id} onClick={() => handleTabChange(item.id)} className={`w-full flex items-center gap-4 px-3 py-3 rounded-xl transition-all duration-200 group relative ${isActive ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/20' : 'hover:bg-stone-800 text-stone-400 hover:text-stone-100'}`}>
+              <button key={item.id} onClick={() => handleTabChange(item.id)} className={`w-full flex items-center gap-4 px-3 py-3 rounded-xl transition-all duration-200 group relative ${isActive ? 'bg-white text-black shadow-lg shadow-white/10' : 'hover:bg-stone-800 text-stone-400 hover:text-stone-100'}`}>
                 <Icon size={22} className={`shrink-0 transition-transform ${isActive ? 'scale-110' : 'group-hover:scale-110'}`} />
                 <span className={`font-medium whitespace-nowrap overflow-hidden transition-all ${!isSidebarOpen ? 'opacity-0 w-0' : 'opacity-100 w-auto'}`}>{item.label}</span>
                 {!isSidebarOpen && <div className={`absolute ${t.dir === 'rtl' ? 'right-full mr-4' : 'left-full ml-4'} px-2 py-1 bg-stone-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50`}>{item.label}</div>}
@@ -315,7 +315,7 @@ const AppContent: React.FC = () => {
             <div className="flex items-center gap-3 px-3 py-2 text-stone-500 group relative">
               <UserCircle size={18} />
               {isSidebarOpen && <div className="flex flex-col flex-1"><span className="text-[10px] uppercase font-bold tracking-widest">{t.role}</span><span className="text-xs font-bold text-stone-300 truncate">{t[user?.role?.toLowerCase() as keyof typeof t] || user?.role}</span></div>}
-              <button onClick={logout} className="text-stone-500 hover:text-red-400 transition-colors"><LogOut size={18} /></button>
+              <button onClick={logout} className="text-stone-500 hover:text-white transition-colors"><LogOut size={18} /></button>
             </div>
           </div>
         </div>
@@ -339,7 +339,7 @@ const AppContent: React.FC = () => {
                 {t[user?.role?.toLowerCase() as keyof typeof t] || user?.role}
               </span>
             </div>
-            <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center text-amber-700 dark:text-amber-400 font-bold border-2 border-amber-500 text-sm md:text-base transition-colors shrink-0">
+            <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-stone-100 dark:bg-stone-800 flex items-center justify-center text-black dark:text-white font-bold border-2 border-black dark:border-white text-sm md:text-base transition-colors shrink-0">
               {user?.name?.charAt(0) || (lang === 'ar' ? 'ع' : 'U')}
             </div>
           </div>

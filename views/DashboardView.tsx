@@ -9,11 +9,11 @@ import { RoastingBatch, Transaction } from '../types';
 const StatCard = ({ title, value, change, isPositive, icon: Icon, color }: any) => (
   <div className="bg-white dark:bg-stone-900 p-4 md:p-6 rounded-2xl shadow-sm border border-stone-200 dark:border-stone-800 transition-colors duration-300">
     <div className="flex justify-between items-start">
-      <div className={`p-2 rounded-xl bg-${color}-50 dark:bg-${color}-900/20 text-${color}-600 dark:text-${color}-400 transition-colors`}>
+      <div className={`p-2 rounded-xl bg-black text-white dark:bg-white dark:text-black transition-colors`}>
         <Icon size={24} />
       </div>
       {change && (
-        <div className={`flex items-center text-xs font-bold ${isPositive ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+        <div className={`flex items-center text-xs font-bold text-black dark:text-white`}>
           {change}
           {isPositive ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
         </div>
@@ -119,7 +119,7 @@ const DashboardView: React.FC = () => {
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4 h-full">
-        <Loader2 className="animate-spin text-amber-600" size={48} />
+        <Loader2 className="animate-spin text-black dark:text-white" size={48} />
         <p className="font-bold text-stone-500">{t.loading}</p>
       </div>
     );
@@ -128,9 +128,9 @@ const DashboardView: React.FC = () => {
   return (
     <div className="space-y-6 md:space-y-8 animate-in fade-in duration-500">
       {stats.lowStockCount > 0 && (
-        <div className="bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/30 p-4 md:p-5 rounded-3xl flex flex-col md:flex-row items-center justify-between gap-4 animate-pulse-once transition-colors">
-          <div className="flex items-center gap-4 text-red-700 dark:text-red-400">
-            <div className="bg-red-100 dark:bg-red-900/40 p-2 rounded-xl">
+        <div className="bg-stone-50 dark:bg-stone-900 border-2 border-black dark:border-white p-4 md:p-5 rounded-3xl flex flex-col md:flex-row items-center justify-between gap-4 animate-pulse-once transition-colors">
+          <div className="flex items-center gap-4 text-black dark:text-white">
+            <div className="bg-black text-white dark:bg-white dark:text-black p-2 rounded-xl">
               <AlertCircle size={24} />
             </div>
             <div>
@@ -142,7 +142,7 @@ const DashboardView: React.FC = () => {
               </p>
             </div>
           </div>
-          <button className="w-full md:w-auto px-6 py-2 bg-red-600 text-white rounded-xl text-xs font-bold hover:bg-red-700 transition-colors shadow-lg shadow-red-900/10">
+          <button className="w-full md:w-auto px-6 py-2 bg-black dark:bg-white text-white dark:text-black rounded-xl text-xs font-bold hover:bg-stone-800 dark:hover:bg-stone-200 transition-colors shadow-lg">
             {lang === 'ar' ? 'مراجعة المخزون' : 'Review Inventory'}
           </button>
         </div>
@@ -168,7 +168,7 @@ const DashboardView: React.FC = () => {
                   contentStyle={{ backgroundColor: theme === 'dark' ? '#1c1917' : '#fff', borderColor: theme === 'dark' ? '#292524' : '#e7e5e4', borderRadius: '12px' }}
                   itemStyle={{ color: theme === 'dark' ? '#f5f5f4' : '#1c1917' }}
                 />
-                <Bar dataKey="sales" fill="#d97706" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="sales" fill={theme === 'dark' ? '#ffffff' : '#000000'} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -186,7 +186,7 @@ const DashboardView: React.FC = () => {
                   contentStyle={{ backgroundColor: theme === 'dark' ? '#1c1917' : '#fff', borderColor: theme === 'dark' ? '#292524' : '#e7e5e4', borderRadius: '12px' }}
                   itemStyle={{ color: theme === 'dark' ? '#f5f5f4' : '#1c1917' }}
                 />
-                <Line type="monotone" dataKey="roast" stroke="#ea580c" strokeWidth={3} dot={{ r: 4, fill: '#ea580c', strokeWidth: 2, stroke: theme === 'dark' ? '#1c1917' : '#fff' }} />
+                <Line type="monotone" dataKey="roast" stroke={theme === 'dark' ? '#ffffff' : '#000000'} strokeWidth={3} dot={{ r: 4, fill: theme === 'dark' ? '#ffffff' : '#000000', strokeWidth: 2, stroke: theme === 'dark' ? '#1c1917' : '#fff' }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -196,7 +196,7 @@ const DashboardView: React.FC = () => {
       <div className="bg-white dark:bg-stone-900 rounded-2xl shadow-sm border border-stone-200 dark:border-stone-800 overflow-hidden transition-colors duration-300">
         <div className="p-4 md:p-6 border-b border-stone-100 dark:border-stone-800 flex justify-between items-center bg-stone-50/50 dark:bg-stone-800/20">
           <h3 className="text-base md:text-lg font-bold text-stone-800 dark:text-stone-100">{t.recentBatches}</h3>
-          <button className="text-amber-600 dark:text-amber-500 text-sm font-semibold hover:underline">{t.viewAll}</button>
+          <button className="text-black dark:text-white text-sm font-semibold hover:underline">{t.viewAll}</button>
         </div>
         <div className="overflow-x-auto">
           <table className={`w-full ${t.dir === 'rtl' ? 'text-right' : 'text-left'} min-w-[600px]`}>
@@ -221,8 +221,8 @@ const DashboardView: React.FC = () => {
                   <td className="px-6 py-4">
                     <span className={`px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${
                       batch.status === 'Ready for Packaging'
-                        ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' 
-                        : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'
+                        ? 'bg-black text-white dark:bg-white dark:text-black' 
+                        : 'bg-white text-black border border-black dark:bg-stone-900 dark:text-white dark:border-white'
                     }`}>
                       {batch.status === 'Ready for Packaging' ? t.ready : batch.status === 'Completed' ? t.completed : t.inProgress}
                     </span>

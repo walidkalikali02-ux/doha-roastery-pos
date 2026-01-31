@@ -37,13 +37,28 @@ Doha Roastery Management System is a comprehensive ERP and POS solution tailored
 - **Payment Methods**: Supports Cash and Card payments.
 - **Thermal Printing**: Professional receipt generation optimized for 58mm/80mm thermal printers.
 - **Automatic Checkout**: Instant inventory deduction and transaction recording upon payment.
+- **Cash Management**: Complete cash drawer management system with:
+  - **Shift Management**: Start/close shifts with initial cash tracking
+  - **Cash In/Out Operations**: Record petty cash movements with reasons
+  - **End-of-Day Reconciliation**: Compare expected vs actual cash with discrepancy reporting
+  - **Discrepancy Alerts**: Automatic notifications for cash variances
+  - **Cash Reports**: Generate detailed cash movement reports for auditing
 
 ### **2.6 AI Insights (Powered by Gemini)** ([AIInsights.tsx](file:///Users/macbookair/Downloads/doha-roastery-management-system%20%281%29/views/AIInsights.tsx))
 - **Smart Business Analyst**: Analyzes sales and waste data to provide operational advice in Arabic/English.
 - **Stock Prediction**: Forecasts upcoming inventory needs based on historical sales patterns.
 - **Optimization Opportunities**: Identifies areas to reduce waste and improve margins.
 
-### **2.7 System Configuration** ([ConfigurationView.tsx](file:///Users/macbookair/Downloads/doha-roastery-management-system%20%281%29/views/ConfigurationView.tsx))
+### **2.7 Reports & Analytics** ([ReportsView.tsx](file:///Users/macbookair/Downloads/doha-roastery-management-system%20%281%29/views/ReportsView.tsx))
+- **Sales Distribution**: Visual charts showing product performance across categories.
+- **Profitability Analysis**: Track margins and identify top-performing products.
+- **Cash Management Reports**: Comprehensive cash flow analysis including:
+  - **Daily Cash Summary**: Opening balance, sales, cash movements, and closing totals
+  - **Reconciliation Status**: Track expected vs actual cash with discrepancy alerts
+  - **Movement History**: Detailed log of all cash in/out operations with reasons
+  - **Export Capabilities**: Generate PDF reports for accounting and auditing
+
+### **2.8 System Configuration** ([ConfigurationView.tsx](file:///Users/macbookair/Downloads/doha-roastery-management-system%20%281%29/views/ConfigurationView.tsx))
 - **Product Catalog**: Manage the global list of products, descriptions, and base prices.
 - **Package Templates**: Define bag sizes, weights, and material costs.
 - **Store Settings**: Configure store name, address, contact info, and VAT rates.
@@ -70,7 +85,8 @@ Doha Roastery Management System is a comprehensive ERP and POS solution tailored
 3. **Packaging**: Upon completion, the roasted weight is recorded, and the batch is divided into retail bags using `Package Templates`.
 4. **Distribution**: Packaged bags are transferred from the Roastery to the Retail Branch.
 5. **Sale**: A customer purchases a bag via `POSView`. The system deducts the item from branch stock and records the sale.
-6. **Analysis**: `AI Insights` reviews the transaction and roasting waste to suggest improvements for the next cycle.
+6. **Cash Management**: Cashiers manage the cash drawer through shift operations, record petty cash movements, and perform end-of-day reconciliation with discrepancy reporting.
+7. **Analysis**: `AI Insights` reviews the transaction and roasting waste to suggest improvements for the next cycle.
 
 ---
 

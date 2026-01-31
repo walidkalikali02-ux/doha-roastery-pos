@@ -2,16 +2,17 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   Search, Plus, Minus, Trash2, CreditCard, Banknote, 
-  Coffee, X, Box, Loader2, CheckCircle2, 
+  Coffee, X, Box, Loader2, CheckCircle2, AlertTriangle,
   LayoutGrid, ShoppingCart, Check, Smartphone, 
   Receipt, Printer, Scissors, PlusCircle,
   Clock, User as UserIcon, History, ChevronDown, ChevronUp,
   SearchX, Calendar, RefreshCw
 } from 'lucide-react';
-import { InventoryItem, CartItem, AddOn, PaymentMethod, PaymentBreakdown, SystemSettings } from '../types';
+import { InventoryItem, CartItem, AddOn, PaymentMethod, PaymentBreakdown, SystemSettings, Shift } from '../types';
 import { useLanguage } from '../App';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../contexts/AuthContext';
+import { shiftService } from '../services/shiftService';
 
 const SIZE_MULTIPLIERS = { S: 0.75, M: 1.0, L: 1.5 };
 const MILK_PRICES = { 'Full Fat': 0, 'Low Fat': 0, 'Oat': 5, 'Almond': 5 };
@@ -74,6 +75,146 @@ const POSView: React.FC = () => {
   const [splitBreakdown, setSplitBreakdown] = useState<PaymentBreakdown>({ cash: 0, card: 0, mobile: 0, card_reference: '' });
   const [cardReference, setCardReference] = useState(''); // REQ-003: State for card reference
   const [showCardInput, setShowCardInput] = useState(false); // UI state for single card payment reference input
+
+  // Shift Management State
+  const [currentShift, setCurrentShift] = useState<Shift | null>(null);
+  const [showStartShiftModal, setShowStartShiftModal] = useState(false);
+  const [startCash, setStartCash] = useState('');
+  const [showShiftDetails, setShowShiftDetails] = useState(false);
+  const [shiftTotals, setShiftTotals] = useState({ sales: 0, returns: 0, cashIn: 0, cashOut: 0, expected: 0 });
+  
+  // Cash In/Out State
+  const [showCashMovementModal, setShowCashMovementModal] = useState(false);
+  const [cashMovementType, setCashMovementType] = useState<'IN' | 'OUT'>('IN');
+  const [cashMovementAmount, setCashMovementAmount] = useState('');
+  const [cashMovementReason, setCashMovementReason] = useState('');
+
+  // Close Shift State
+  const [showCloseShiftModal, setShowCloseShiftModal] = useState(false);
+  const [actualCash, setActualCash] = useState('');
+  const [closingNotes, setClosingNotes] = useState('');
+  const [shiftReport, setShiftReport] = useState<any>(null);
+
+  const checkShift = useCallback(async () => {
+    // Allow demo-user to use shift features for testing
+    if (!user) return;
+    try {
+      const shift = await shiftService.getOpenShift(user.id);
+      if (shift) {
+        setCurrentShift(shift);
+        const totals = await shiftService.getShiftTotals(shift);
+        setShiftTotals(totals);
+      } else {
+        // Only prompt to start shift if not demo-user to avoid annoyance, 
+        // or just let them click the button.
+        // setShowStartShiftModal(true); 
+      }
+    } catch (e) {
+      console.error("Shift check failed", e);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    checkShift();
+  }, [checkShift]);
+
+  const handleStartShift = async () => {
+    if (!startCash || isNaN(parseFloat(startCash))) return;
+    setIsProcessing(true);
+    try {
+      const shift = await shiftService.startShift(user?.id || '', user?.name || 'Cashier', parseFloat(startCash));
+      setCurrentShift(shift);
+      setShiftTotals({ sales: 0, returns: 0, cashIn: 0, cashOut: 0, expected: parseFloat(startCash) });
+      setShowStartShiftModal(false);
+    } catch (error: any) {
+      console.error(error);
+      if (error?.message?.includes('violates row-level security')) {
+         alert("Permission Denied: Please sign in with an authorized account.");
+      } else {
+         alert("Failed to start shift: " + (error?.message || "Unknown error"));
+      }
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleCashMovement = async () => {
+    if (!currentShift || !cashMovementAmount || !cashMovementReason) return;
+    setIsProcessing(true);
+    try {
+      await shiftService.addCashMovement(
+        currentShift.id,
+        cashMovementType,
+        parseFloat(cashMovementAmount),
+        cashMovementReason,
+        user?.id || '',
+        user?.name || 'Cashier'
+      );
+      
+      const totals = await shiftService.getShiftTotals(currentShift);
+      setShiftTotals(totals);
+      setShowCashMovementModal(false);
+      setCashMovementAmount('');
+      setCashMovementReason('');
+    } catch (error: any) {
+      console.error(error);
+      if (error?.message?.includes('relation "cash_movements" does not exist') || error?.code === '42P01') {
+         alert("System Update Required: Please ask administrator to run the database setup script (enable_cash_features.sql).");
+      } else {
+         alert("Failed to record cash movement");
+      }
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleCloseShiftCheck = async () => {
+     if (!actualCash) return;
+     const actual = parseFloat(actualCash);
+     const discrepancy = actual - shiftTotals.expected;
+     
+     setShiftReport({
+       expected: shiftTotals.expected,
+       actual: actual,
+       discrepancy: discrepancy,
+       sales: shiftTotals.sales,
+       cashIn: shiftTotals.cashIn,
+       cashOut: shiftTotals.cashOut,
+       initial: currentShift?.initial_cash
+     });
+  };
+
+  const confirmCloseShift = async () => {
+    if (!currentShift || !shiftReport) return;
+    setIsProcessing(true);
+    try {
+      await shiftService.closeShift(
+        currentShift.id, 
+        shiftReport.actual, 
+        shiftReport.sales,
+        0, // returns
+        closingNotes
+      );
+      setCurrentShift(null);
+      setShiftReport(null);
+      setShowCloseShiftModal(false);
+      setShowShiftDetails(false);
+      setActualCash('');
+      setClosingNotes('');
+      // Optionally redirect or show start shift again
+      setShowStartShiftModal(true);
+    } catch (error: any) {
+      console.error(error);
+      if (error?.message?.includes('column') || error?.code === '42703') {
+         alert("System Update Required: Database schema out of date. Run 'enable_cash_features.sql'.");
+      } else {
+         alert("Failed to close shift");
+      }
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
 
   const fetchInventory = useCallback(async () => {
     setIsLoading(true);
@@ -298,6 +439,7 @@ const POSView: React.FC = () => {
       setCashReceived('');
       setCardReference('');
       fetchInventory(); 
+      checkShift(); // Update shift totals
     } catch (error) { 
       console.error(error);
       alert("Checkout failed"); 
@@ -387,6 +529,16 @@ const POSView: React.FC = () => {
 
   const updateReturnReason = (cartId: string, reason: string) => {
     setItemsToReturn(prev => prev.map(i => i.cartId === cartId ? { ...i, return_reason: reason } : i));
+  };
+
+  const updateReturnQuantity = (cartId: string, delta: number, max: number) => {
+    setItemsToReturn(prev => prev.map(i => {
+      if (i.cartId === cartId) {
+        const newQty = Math.min(Math.max(1, i.quantity + delta), max);
+        return { ...i, quantity: newQty };
+      }
+      return i;
+    }));
   };
 
   const submitReturnRequest = async () => {
@@ -1003,34 +1155,47 @@ const POSView: React.FC = () => {
       )}
 
       {/* Main Catalog or History View */}
-      <div className="flex-1 flex flex-col gap-6 overflow-hidden">
-        <div className="bg-white dark:bg-stone-900 p-5 rounded-[40px] border border-stone-200 dark:border-stone-800 shadow-sm flex flex-col gap-5">
-           <div className="flex flex-wrap items-center gap-4 bg-white/50 dark:bg-stone-900/50 p-4 rounded-3xl border border-stone-200 dark:border-stone-800">
-             <div className="relative flex-1 min-w-[200px]">
-               <Search className={`absolute ${t.dir === 'rtl' ? 'right-6' : 'left-6'} top-1/2 -translate-y-1/2 text-stone-400`} size={24}/>
+      <div className="flex-1 flex flex-col gap-4 overflow-hidden h-full">
+        {/* Top Bar: Search & Categories */}
+        <div className="bg-white dark:bg-stone-900 p-4 rounded-[32px] border border-stone-200 dark:border-stone-800 shadow-sm flex flex-col gap-4 shrink-0">
+           <div className="flex items-center gap-4">
+             <button 
+               onClick={() => {
+                 if (!currentShift) {
+                   setShowStartShiftModal(true);
+                 } else {
+                   setShowShiftDetails(true);
+                 }
+               }} 
+               className="p-4 bg-stone-100 dark:bg-stone-800 rounded-2xl font-bold text-xs flex items-center gap-2 hover:bg-black hover:text-white transition-all shrink-0"
+             >
+               <Banknote size={20}/> 
+               <span className="hidden sm:inline">{lang === 'ar' ? 'الصندوق' : 'Drawer'}</span>
+             </button>
+             <div className="relative flex-1">
+               <Search className={`absolute ${t.dir === 'rtl' ? 'right-5' : 'left-5'} top-1/2 -translate-y-1/2 text-stone-400`} size={20}/>
                <input 
                 type="text" 
                 placeholder={activeTab === 'HISTORY' ? t.history : t.searchProduct} 
                 value={activeTab === 'HISTORY' ? historySearch : searchTerm} 
                 onChange={e => activeTab === 'HISTORY' ? setHistorySearch(e.target.value) : setSearchTerm(e.target.value)} 
-                className="w-full bg-white border-2 border-black rounded-[28px] px-16 py-5 font-bold outline-none focus:ring-2 focus:ring-black text-lg shadow-inner transition-all text-black placeholder-gray-500" 
+                className="w-full bg-stone-50 dark:bg-stone-800 border-none rounded-2xl px-12 py-4 font-bold outline-none focus:ring-2 focus:ring-black text-base transition-all text-black dark:text-white placeholder-stone-400" 
                />
              </div>
              
              {activeTab === 'HISTORY' && (
                <div className="flex items-center gap-2">
-                 <div className="flex items-center gap-2 bg-white dark:bg-stone-900 px-4 py-2 rounded-2xl shadow-sm border border-stone-100 dark:border-stone-800">
-                   <Calendar size={16} className="text-stone-400" />
+                 <div className="flex items-center gap-2 bg-stone-50 dark:bg-stone-800 px-4 py-3 rounded-2xl border border-stone-100 dark:border-stone-700">
                    <input 
                      type="date" 
-                     className="bg-transparent border-none outline-none text-xs font-bold"
+                     className="bg-transparent border-none outline-none text-xs font-bold text-stone-600 dark:text-stone-300"
                      value={dateRange.start}
                      onChange={(e) => setDateRange({...dateRange, start: e.target.value})}
                    />
                    <span className="text-stone-300">→</span>
                    <input 
                      type="date" 
-                     className="bg-transparent border-none outline-none text-xs font-bold"
+                     className="bg-transparent border-none outline-none text-xs font-bold text-stone-600 dark:text-stone-300"
                      value={dateRange.end}
                      onChange={(e) => setDateRange({...dateRange, end: e.target.value})}
                    />
@@ -1038,11 +1203,12 @@ const POSView: React.FC = () => {
                      <button onClick={() => setDateRange({start: '', end: ''})} className="text-stone-400 hover:text-black"><X size={14}/></button>
                    )}
                  </div>
-                 <button onClick={fetchHistory} className="p-4 bg-stone-900 text-white rounded-2xl hover:bg-gray-900 transition-all border-2 border-black"><RefreshCw size={20}/></button>
+                 <button onClick={fetchHistory} className="p-3 bg-black text-white rounded-xl hover:bg-stone-800 transition-all border-2 border-black"><RefreshCw size={20}/></button>
                </div>
              )}
            </div>
-           <div className="flex items-center gap-3 overflow-x-auto no-scrollbar pb-1">
+
+           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
               {[ 
                 { id: 'ALL', label: t.all, icon: LayoutGrid }, 
                 { id: 'DRINKS', label: t.drinks, icon: Coffee }, 
@@ -1050,47 +1216,56 @@ const POSView: React.FC = () => {
                 { id: 'HISTORY', label: t.history, icon: History },
                 { id: 'RETURNS', label: lang === 'ar' ? 'المرتجعات' : 'Returns', icon: RefreshCw }
               ].map(tab => (
-                <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex items-center gap-3 px-8 py-4 rounded-[24px] text-sm font-black transition-all ${activeTab === tab.id ? 'bg-black text-white shadow-xl scale-105 border-2 border-black' : 'bg-white text-black border-2 border-black hover:bg-gray-100'}`}>
-                  <tab.icon size={18}/> {tab.label}
+                <button 
+                  key={tab.id} 
+                  onClick={() => setActiveTab(tab.id as any)} 
+                  className={`flex items-center gap-2 px-5 py-3 rounded-xl text-xs font-black transition-all whitespace-nowrap ${
+                    activeTab === tab.id 
+                    ? 'bg-black text-white shadow-lg' 
+                    : 'bg-stone-50 dark:bg-stone-800 text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-700'
+                  }`}
+                >
+                  <tab.icon size={16}/> {tab.label}
                 </button>
               ))}
            </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto custom-scrollbar px-1 pb-10">
+        {/* Content Area */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar px-1 pb-20">
           {activeTab === 'HISTORY' ? (
-            <div className="space-y-4 animate-in slide-in-from-bottom-4">
+            <div className="space-y-3 animate-in slide-in-from-bottom-4">
               {isLoading ? (
                 <div className="flex flex-col items-center justify-center py-20 opacity-30">
                   <Loader2 size={48} className="animate-spin mb-4" />
                   <span className="font-bold">{t.loading}</span>
                 </div>
               ) : filteredHistory.length > 0 ? filteredHistory.map(tx => (
-                <div key={tx.id} className="bg-white dark:bg-stone-900 p-6 rounded-[32px] border border-stone-200 dark:border-stone-800 shadow-sm hover:shadow-md transition-all flex flex-col md:flex-row justify-between items-center gap-4">
-                   <div className="flex items-center gap-5 w-full md:w-auto">
-                      <div className="p-4 bg-stone-50 dark:bg-stone-800 text-stone-400 rounded-2xl"><Receipt size={24}/></div>
+                <div key={tx.id} className="bg-white dark:bg-stone-900 p-4 rounded-2xl border border-stone-200 dark:border-stone-800 shadow-sm hover:shadow-md transition-all flex flex-col md:flex-row justify-between items-center gap-4 group">
+                   <div className="flex items-center gap-4 w-full md:w-auto">
+                      <div className="p-3 bg-stone-50 dark:bg-stone-800 text-stone-400 rounded-xl group-hover:bg-black group-hover:text-white transition-colors"><Receipt size={20}/></div>
                       <div>
                          <div className="flex items-center gap-2">
-                            <h4 className="font-black text-lg">{tx.id}</h4>
+                            <h4 className="font-bold text-sm">{tx.id}</h4>
                             <span className="px-2 py-0.5 bg-stone-100 dark:bg-stone-800 rounded text-[10px] font-black uppercase">{tx.payment_method}</span>
                          </div>
-                         <div className="flex items-center gap-3 text-stone-400 text-xs mt-1">
-                            <span className="flex items-center gap-1"><Clock size={12}/> {new Date(tx.created_at).toLocaleString()}</span>
-                            <span className="flex items-center gap-1"><UserIcon size={12}/> {tx.cashier_name}</span>
+                         <div className="flex items-center gap-3 text-stone-400 text-[10px] mt-1 font-bold">
+                            <span className="flex items-center gap-1"><Clock size={10}/> {new Date(tx.created_at).toLocaleString()}</span>
+                            <span className="flex items-center gap-1"><UserIcon size={10}/> {tx.cashier_name}</span>
                          </div>
                       </div>
                    </div>
-                   <div className="flex items-center gap-8 w-full md:w-auto justify-between md:justify-end">
+                   <div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-end">
                       <div className="text-right">
                          <span className="block text-[10px] font-black text-stone-400 uppercase">{t.total}</span>
-                         <span className="text-2xl font-black text-black font-mono">{tx.total.toFixed(2)} <span className="text-xs opacity-50">{t.currency}</span></span>
+                         <span className="text-lg font-black text-black font-mono">{tx.total.toFixed(2)} <span className="text-[10px] opacity-50">{t.currency}</span></span>
                       </div>
                       <button 
                         onClick={() => handlePrint(tx)}
-                        className="p-4 bg-stone-900 text-white rounded-2xl hover:bg-gray-900 transition-all active:scale-95 shadow-lg flex items-center gap-2 border-2 border-black"
+                        className="p-3 bg-white hover:bg-stone-50 text-black rounded-xl border-2 border-black transition-all active:scale-95 flex items-center gap-2"
                       >
-                        <Printer size={20}/>
-                        <span className="text-sm font-bold hidden sm:inline">{t.reprint}</span>
+                        <Printer size={16}/>
+                        <span className="text-xs font-black hidden sm:inline">{t.reprint}</span>
                       </button>
                    </div>
                 </div>
@@ -1183,20 +1358,43 @@ const POSView: React.FC = () => {
                             </div>
                             
                             {isSelected && (
-                              <div className="mt-4 pt-4 border-t border-black/50 dark:border-black/30 animate-in slide-in-from-top-2">
-                                <label className="text-[10px] font-black text-black uppercase mb-2 block">{lang === 'ar' ? 'سبب الإرجاع' : 'Return Reason'}</label>
-                                <select 
-                                  value={returnItem?.return_reason || ''}
-                                  onChange={(e) => updateReturnReason(item.cartId, e.target.value)}
-                                  className="w-full bg-white dark:bg-stone-900 border-2 border-black rounded-xl px-4 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-black"
-                                >
-                                  <option value="">{lang === 'ar' ? 'اختر السبب...' : 'Select reason...'}</option>
-                                  <option value="Customer Dissatisfaction">{lang === 'ar' ? 'عدم رضا العميل' : 'Customer Dissatisfaction'}</option>
-                                  <option value="Wrong Item">{lang === 'ar' ? 'صنف خاطئ' : 'Wrong Item'}</option>
-                                  <option value="Quality Issue">{lang === 'ar' ? 'مشكلة في الجودة' : 'Quality Issue'}</option>
-                                  <option value="Order Cancelled">{lang === 'ar' ? 'إلغاء الطلب' : 'Order Cancelled'}</option>
-                                  <option value="Other">{lang === 'ar' ? 'أخرى' : 'Other'}</option>
-                                </select>
+                              <div className="mt-4 pt-4 border-t border-black/50 dark:border-black/30 animate-in slide-in-from-top-2 space-y-3">
+                                <div className="flex items-center justify-between gap-4">
+                                  <div className="flex-1">
+                                    <label className="text-[10px] font-black text-black uppercase mb-1 block">{lang === 'ar' ? 'الكمية' : 'Quantity'}</label>
+                                    <div className="flex items-center gap-2 bg-stone-100 dark:bg-stone-800 rounded-xl p-1 w-fit">
+                                      <button 
+                                        onClick={() => updateReturnQuantity(item.cartId, -1, item.quantity)}
+                                        className="w-8 h-8 flex items-center justify-center hover:bg-white rounded-lg transition-colors"
+                                      >
+                                        <Minus size={14} strokeWidth={3} />
+                                      </button>
+                                      <span className="w-8 text-center font-black text-sm">{returnItem?.quantity}</span>
+                                      <button 
+                                        onClick={() => updateReturnQuantity(item.cartId, 1, item.quantity)}
+                                        className="w-8 h-8 flex items-center justify-center hover:bg-white rounded-lg transition-colors"
+                                        disabled={returnItem?.quantity === item.quantity}
+                                      >
+                                        <Plus size={14} strokeWidth={3} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="flex-1">
+                                    <label className="text-[10px] font-black text-black uppercase mb-1 block">{lang === 'ar' ? 'سبب الإرجاع' : 'Return Reason'}</label>
+                                    <select 
+                                      value={returnItem?.return_reason || ''}
+                                      onChange={(e) => updateReturnReason(item.cartId, e.target.value)}
+                                      className="w-full bg-white dark:bg-stone-900 border-2 border-black rounded-xl px-4 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-black"
+                                    >
+                                      <option value="">{lang === 'ar' ? 'اختر السبب...' : 'Select reason...'}</option>
+                                      <option value="Customer Dissatisfaction">{lang === 'ar' ? 'عدم رضا العميل' : 'Customer Dissatisfaction'}</option>
+                                      <option value="Wrong Item">{lang === 'ar' ? 'صنف خاطئ' : 'Wrong Item'}</option>
+                                      <option value="Quality Issue">{lang === 'ar' ? 'مشكلة في الجودة' : 'Quality Issue'}</option>
+                                      <option value="Order Cancelled">{lang === 'ar' ? 'إلغاء الطلب' : 'Order Cancelled'}</option>
+                                      <option value="Other">{lang === 'ar' ? 'أخرى' : 'Other'}</option>
+                                    </select>
+                                  </div>
+                                </div>
                               </div>
                             )}
                           </div>
@@ -1275,6 +1473,26 @@ const POSView: React.FC = () => {
                           <span className="block text-[8px] font-black text-stone-400 uppercase">{lang === 'ar' ? 'المبلغ' : 'Amount'}</span>
                           <span className="text-lg font-black text-black font-mono">{req.total_refund_amount.toFixed(2)}</span>
                         </div>
+                        
+                        {req.status === 'PENDING_APPROVAL' && (user?.role === 'ADMIN' || user?.role === 'MANAGER') && (
+                          <div className="flex items-center gap-2">
+                            <button 
+                              onClick={() => approveRefund(req.id, true)}
+                              className="p-3 bg-black text-white rounded-xl hover:bg-gray-900 transition-all active:scale-95 shadow-md border-2 border-black"
+                              title={lang === 'ar' ? 'موافقة' : 'Approve'}
+                            >
+                              <CheckCircle2 size={18} />
+                            </button>
+                            <button 
+                              onClick={() => approveRefund(req.id, false)}
+                              className="p-3 bg-white text-black rounded-xl hover:bg-stone-100 transition-all active:scale-95 border-2 border-black"
+                              title={lang === 'ar' ? 'رفض' : 'Reject'}
+                            >
+                              <X size={18} />
+                            </button>
+                          </div>
+                        )}
+
                         {req.status === 'APPROVED' && (
                           <button 
                             onClick={() => handlePrintReturn(req)}
@@ -1296,21 +1514,26 @@ const POSView: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-6 animate-in fade-in duration-500">
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-4 animate-in fade-in duration-500">
                {isLoading ? (
                   Array.from({length: 8}).map((_, i) => (
-                    <div key={i} className="bg-stone-200 dark:bg-stone-800 rounded-[48px] aspect-[4/5] animate-pulse"></div>
+                    <div key={i} className="bg-stone-100 dark:bg-stone-800 rounded-[32px] aspect-[4/5] animate-pulse"></div>
                   ))
                ) : filteredItems.map(item => (
-                 <button key={item.id} onClick={() => openCustomization(item)} className="group bg-white dark:bg-stone-900 p-5 rounded-[48px] border border-stone-200 dark:border-stone-800 shadow-sm hover:shadow-2xl transition-all flex flex-col h-full active:scale-95">
-                   <div className="aspect-square rounded-[40px] overflow-hidden mb-5 bg-stone-100 relative shadow-inner">
-                      <img src={item.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt={item.name} />
+                 <button 
+                   key={item.id} 
+                   onClick={() => openCustomization(item)} 
+                   className="group bg-white dark:bg-stone-900 p-3 rounded-[32px] border border-stone-200 dark:border-stone-800 shadow-sm hover:shadow-xl hover:border-black/10 transition-all flex flex-col h-full active:scale-95 relative overflow-hidden"
+                 >
+                   <div className="aspect-square rounded-[24px] overflow-hidden mb-3 bg-stone-50 relative">
+                      <img src={item.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" alt={item.name} />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors" />
                    </div>
-                   <div className="flex-1 flex flex-col px-2">
-                      <h4 className="font-black text-stone-800 dark:text-stone-100 text-base line-clamp-2 mb-4 leading-tight text-center">{item.name}</h4>
-                      <div className="mt-auto flex justify-between items-center pt-4 border-t border-stone-50 dark:border-stone-800">
-                         <span className="text-black font-black text-2xl font-mono">{item.price}<span className="text-xs font-bold ml-1 opacity-50 uppercase">{t.currency}</span></span>
-                         <div className="w-12 h-12 bg-white border-2 border-black rounded-[20px] flex items-center justify-center group-hover:bg-black group-hover:text-white transition-colors"><Plus size={22} strokeWidth={3}/></div>
+                   <div className="flex-1 flex flex-col px-1">
+                      <h4 className="font-bold text-stone-800 dark:text-stone-100 text-sm line-clamp-2 mb-2 leading-tight text-center h-10">{item.name}</h4>
+                      <div className="mt-auto flex justify-between items-center bg-stone-50 dark:bg-stone-800 p-2 rounded-2xl group-hover:bg-black group-hover:text-white transition-colors">
+                         <span className="font-black text-lg font-mono px-2">{item.price}<span className="text-[10px] ml-1 opacity-60 font-sans">{t.currency}</span></span>
+                         <div className="w-8 h-8 bg-white dark:bg-stone-700 text-black dark:text-white rounded-xl flex items-center justify-center shadow-sm"><Plus size={16} strokeWidth={3}/></div>
                       </div>
                    </div>
                  </button>
@@ -1321,71 +1544,79 @@ const POSView: React.FC = () => {
       </div>
 
       {/* Cart Sidebar */}
-      <aside className={`fixed inset-y-0 ${t.dir === 'rtl' ? 'left-0' : 'right-0'} z-[100] w-full sm:w-[450px] lg:w-[420px] transform transition-all duration-500 ease-in-out lg:static lg:translate-x-0 ${showMobileCart ? 'translate-x-0' : (t.dir === 'rtl' ? '-translate-x-full' : 'translate-x-full')} flex flex-col bg-white dark:bg-stone-900 lg:rounded-[60px] shadow-2xl border border-stone-200 dark:border-stone-800 overflow-hidden`}>
-         <div className="p-8 border-b flex justify-between items-center bg-white/50 dark:bg-stone-900/50 backdrop-blur-md">
-            <div className="flex items-center gap-4">
-               <div className="p-4 bg-white border-2 border-black text-black rounded-[24px]"><ShoppingCart size={28}/></div>
-               <div><h3 className="text-xl font-black">{t.bill}</h3><span className="text-[11px] font-black text-stone-400 uppercase">{cart.length} {t.items}</span></div>
+      <aside className={`fixed inset-y-0 ${t.dir === 'rtl' ? 'left-0' : 'right-0'} z-[100] w-full sm:w-[450px] lg:w-[400px] transform transition-all duration-500 ease-in-out lg:static lg:translate-x-0 ${showMobileCart ? 'translate-x-0' : (t.dir === 'rtl' ? '-translate-x-full' : 'translate-x-full')} flex flex-col bg-white dark:bg-stone-900 border-l border-stone-200 dark:border-stone-800 shadow-2xl lg:shadow-none h-full`}>
+         {/* Header */}
+         <div className="p-6 border-b border-stone-100 dark:border-stone-800 flex justify-between items-center bg-white dark:bg-stone-900 z-10 shrink-0">
+            <div className="flex items-center gap-3">
+               <div className="w-10 h-10 bg-black text-white rounded-xl flex items-center justify-center shadow-md"><ShoppingCart size={20}/></div>
+               <div>
+                   <h3 className="text-lg font-black">{t.bill}</h3>
+                   <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">{cart.length} {t.items}</span>
+               </div>
             </div>
-            <button onClick={() => setShowMobileCart(false)} className="lg:hidden p-3 hover:bg-stone-100 rounded-full"><X size={32}/></button>
+            <button onClick={() => setShowMobileCart(false)} className="lg:hidden p-2 hover:bg-stone-100 rounded-full"><X size={24}/></button>
          </div>
 
-         <div className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar bg-stone-50/20 dark:bg-stone-950/20">
+         {/* Cart Items */}
+         <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar bg-stone-50 dark:bg-stone-950/30">
             {cart.length > 0 ? cart.map(item => (
-              <div key={(item as any).cartId} className="bg-white dark:bg-stone-900 p-5 rounded-[36px] border border-stone-100 dark:border-stone-800 shadow-sm flex items-center gap-4 animate-in slide-in-from-bottom-2">
-                 <div className="w-16 h-16 rounded-2xl overflow-hidden shrink-0 bg-stone-100"><img src={item.image} className="w-full h-full object-cover" /></div>
-                 <div className="flex-1 min-w-0">
-                    <h5 className="font-bold text-sm truncate">{item.name}</h5>
-                    {item.selectedCustomizations && (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                         <span className="px-1.5 py-0.5 bg-white border border-black text-black rounded text-[8px] font-black uppercase">{item.selectedCustomizations.size}</span>
-                         {item.selectedCustomizations.selectedAddOns?.map((ao: AddOn) => <span key={ao.id} className="px-1.5 py-0.5 bg-white border border-black text-black rounded text-[8px] font-black uppercase">+{ao.name}</span>)}
-                      </div>
-                    )}
+              <div key={(item as any).cartId} className="bg-white dark:bg-stone-900 p-3 rounded-2xl border border-stone-100 dark:border-stone-800 shadow-sm flex gap-3 group animate-in slide-in-from-bottom-2">
+                 <div className="w-14 h-14 rounded-xl overflow-hidden shrink-0 bg-stone-100"><img src={item.image} className="w-full h-full object-cover" /></div>
+                 <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
+                    <div className="flex justify-between items-start gap-2">
+                        <h5 className="font-bold text-sm leading-tight line-clamp-2">{item.name}</h5>
+                        <span className="font-black font-mono text-sm">{(item.price * item.quantity).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between items-end">
+                        <div className="flex flex-wrap gap-1">
+                           {item.selectedCustomizations && (
+                              <span className="px-1.5 py-0.5 bg-stone-100 dark:bg-stone-800 rounded text-[9px] font-bold text-stone-500 uppercase">{item.selectedCustomizations.size}</span>
+                           )}
+                           {item.selectedCustomizations?.selectedAddOns?.map((ao: AddOn) => (
+                             <span key={ao.id} className="px-1.5 py-0.5 bg-stone-100 dark:bg-stone-800 rounded text-[9px] font-bold text-stone-500 uppercase">+{ao.name}</span>
+                           ))}
+                        </div>
+                        <div className="flex items-center gap-1 bg-stone-100 dark:bg-stone-800 p-1 rounded-lg">
+                           <button onClick={() => updateQuantity((item as any).cartId, -1)} className="w-6 h-6 flex items-center justify-center hover:bg-white dark:hover:bg-stone-700 rounded-md transition-colors"><Minus size={12} strokeWidth={3}/></button>
+                           <span className="w-6 text-center font-black font-mono text-xs">{item.quantity}</span>
+                           <button onClick={() => updateQuantity((item as any).cartId, 1)} className="w-6 h-6 flex items-center justify-center hover:bg-white dark:hover:bg-stone-700 rounded-md transition-colors"><Plus size={12} strokeWidth={3}/></button>
+                        </div>
+                    </div>
                  </div>
-                 <div className="flex items-center gap-1 bg-stone-50 dark:bg-stone-950 p-1 rounded-2xl">
-                    <button onClick={() => updateQuantity((item as any).cartId, -1)} className="w-8 h-8 flex items-center justify-center hover:bg-white rounded-lg"><Minus size={14} strokeWidth={3}/></button>
-                    <span className="w-4 text-center font-black font-mono text-xs">{item.quantity}</span>
-                    <button onClick={() => updateQuantity((item as any).cartId, 1)} className="w-8 h-8 flex items-center justify-center hover:bg-white rounded-lg"><Plus size={14} strokeWidth={3}/></button>
-                 </div>
-                 <button onClick={() => removeFromCart((item as any).cartId)} className="text-stone-300 hover:text-black p-2"><Trash2 size={20}/></button>
               </div>
             )) : (
-              <div className="h-full flex flex-col items-center justify-center opacity-30">
-                <ShoppingCart size={64} className="mb-4" />
-                <p className="font-bold">{t.emptyCart}</p>
+              <div className="h-full flex flex-col items-center justify-center opacity-20">
+                <ShoppingCart size={48} className="mb-4" />
+                <p className="font-bold text-xs uppercase tracking-widest">{t.emptyCart}</p>
               </div>
             )}
          </div>
 
-         <div className="p-8 bg-stone-900 text-white shrink-0">
-            <div className="space-y-1 mb-4 opacity-70 text-[10px] uppercase font-black tracking-widest border-b border-white/5 pb-4">
-              <div className="flex justify-between"><span>{t.subtotal}</span><span>{totals.subtotal.toFixed(2)} {t.currency}</span></div>
-            </div>
-            <div className="flex justify-between items-center mb-8">
-               <span className="text-2xl font-black uppercase tracking-tight">{t.total}</span>
-               <div className="text-right">
-                 <span className="text-4xl font-black text-black font-mono">{totals.total.toFixed(2)}</span>
-                 <span className="text-xs font-bold ml-2 opacity-50 uppercase">{t.currency}</span>
-               </div>
+         {/* Footer / Totals */}
+         <div className="p-6 bg-white dark:bg-stone-900 border-t border-stone-200 dark:border-stone-800 z-10 shrink-0 shadow-[0_-10px_40px_rgba(0,0,0,0.05)]">
+            <div className="space-y-2 mb-6">
+              <div className="flex justify-between text-xs font-bold text-stone-500">
+                  <span>{t.subtotal}</span>
+                  <span>{totals.subtotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center pt-3 border-t border-dashed border-stone-200 dark:border-stone-800">
+                 <span className="text-sm font-black uppercase">{t.total}</span>
+                 <span className="text-3xl font-black font-mono">{totals.total.toFixed(2)} <span className="text-xs font-bold opacity-50">{t.currency}</span></span>
+              </div>
             </div>
             
-            <div className="grid grid-cols-4 gap-3">
-               <button onClick={() => setShowCashModal(true)} disabled={cart.length === 0 || isProcessing} className="flex flex-col items-center justify-center gap-2 h-20 rounded-3xl bg-white border-2 border-black text-black hover:bg-gray-100 active:scale-95 transition-all disabled:opacity-30">
-                  <Banknote size={20} className="text-black"/>
-                  <span className="text-[8px] font-black uppercase">{t.cash}</span>
+            <div className="grid grid-cols-2 gap-3">
+               <button onClick={() => setShowCashModal(true)} disabled={cart.length === 0 || isProcessing} className="py-4 rounded-xl bg-stone-100 dark:bg-stone-800 hover:bg-stone-200 dark:hover:bg-stone-700 text-black dark:text-white font-black text-xs uppercase flex items-center justify-center gap-2 disabled:opacity-50 transition-colors">
+                  <Banknote size={18}/> {t.cash}
                </button>
-               <button onClick={() => setShowCardInput(true)} disabled={cart.length === 0 || isProcessing} className="flex flex-col items-center justify-center gap-2 h-20 rounded-3xl bg-white border-2 border-black text-black hover:bg-gray-100 active:scale-95 transition-all disabled:opacity-30">
-                  <CreditCard size={20} className="text-black"/>
-                  <span className="text-[8px] font-black uppercase">{t.card}</span>
+               <button onClick={() => setShowCardInput(true)} disabled={cart.length === 0 || isProcessing} className="py-4 rounded-xl bg-stone-100 dark:bg-stone-800 hover:bg-stone-200 dark:hover:bg-stone-700 text-black dark:text-white font-black text-xs uppercase flex items-center justify-center gap-2 disabled:opacity-50 transition-colors">
+                  <CreditCard size={18}/> {t.card}
                </button>
-               <button onClick={() => handleCheckout('MOBILE')} disabled={cart.length === 0 || isProcessing} className="flex flex-col items-center justify-center gap-2 h-20 rounded-3xl bg-white border-2 border-black text-black hover:bg-gray-100 active:scale-95 transition-all disabled:opacity-30">
-                  <Smartphone size={20} className="text-black"/>
-                  <span className="text-[8px] font-black uppercase">{lang === 'ar' ? 'هاتف' : 'Mobile'}</span>
+               <button onClick={() => handleCheckout('MOBILE')} disabled={cart.length === 0 || isProcessing} className="py-4 rounded-xl bg-stone-100 dark:bg-stone-800 hover:bg-stone-200 dark:hover:bg-stone-700 text-black dark:text-white font-black text-xs uppercase flex items-center justify-center gap-2 disabled:opacity-50 transition-colors">
+                  <Smartphone size={18}/> {lang === 'ar' ? 'هاتف' : 'Mobile'}
                </button>
-               <button onClick={() => setShowSplitModal(true)} disabled={cart.length === 0 || isProcessing} className="flex flex-col items-center justify-center gap-2 h-20 rounded-3xl bg-black text-white border-2 border-black hover:bg-gray-900 active:scale-95 transition-all disabled:opacity-30">
-                  <Scissors size={20} className="text-white"/>
-                  <span className="text-[8px] font-black uppercase">{lang === 'ar' ? 'مجزأ' : 'Split'}</span>
+               <button onClick={() => setShowSplitModal(true)} disabled={cart.length === 0 || isProcessing} className="py-4 rounded-xl bg-black text-white hover:bg-stone-800 font-black text-xs uppercase flex items-center justify-center gap-2 disabled:opacity-50 transition-colors shadow-lg">
+                  <Scissors size={18}/> {lang === 'ar' ? 'مجزأ' : 'Split'}
                </button>
             </div>
          </div>
@@ -1469,7 +1700,13 @@ const POSView: React.FC = () => {
       {/* Manager Approval Modal for Returns */}
       {showManagerApprovalModal && pendingReturnRequest && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[400] flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-stone-900 rounded-[48px] max-w-md w-full p-10 shadow-2xl animate-in zoom-in-95 border border-stone-200 dark:border-stone-800">
+          <div className="bg-white dark:bg-stone-900 rounded-[48px] max-w-md w-full p-10 shadow-2xl animate-in zoom-in-95 border border-stone-200 dark:border-stone-800 relative">
+            <button 
+              onClick={() => setShowManagerApprovalModal(false)}
+              className="absolute top-6 right-6 p-2 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-full transition-colors text-stone-400 hover:text-black"
+            >
+              <X size={24} />
+            </button>
             <div className="text-center mb-8">
               <div className="w-20 h-20 bg-white border-2 border-black text-black rounded-3xl flex items-center justify-center mx-auto mb-6">
                 <UserIcon size={40} />
@@ -1510,6 +1747,257 @@ const POSView: React.FC = () => {
                 {lang === 'ar' ? 'موافقة' : 'Approve'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* Start Shift Modal */}
+      {showStartShiftModal && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[500] flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-stone-900 rounded-[48px] max-w-md w-full p-10 shadow-2xl animate-in zoom-in-95 border border-stone-200 dark:border-stone-800">
+             <div className="text-center mb-8">
+               <div className="w-20 h-20 bg-white border-2 border-black text-black rounded-3xl flex items-center justify-center mx-auto mb-6">
+                 <Banknote size={40} />
+               </div>
+               <h3 className="text-2xl font-black mb-2">{lang === 'ar' ? 'بدء الوردية' : 'Start Shift'}</h3>
+               <p className="text-xs text-stone-400 font-bold uppercase tracking-widest">{lang === 'ar' ? 'أدخل المبلغ الافتتاحي للصندوق' : 'Enter initial cash float'}</p>
+             </div>
+             
+             <div className="space-y-4 mb-8">
+                <input 
+                  type="number" 
+                  autoFocus
+                  value={startCash}
+                  onChange={e => setStartCash(e.target.value)}
+                  className="w-full bg-stone-50 dark:bg-stone-950 border-none rounded-2xl px-6 py-5 font-mono font-black text-4xl text-black outline-none focus:ring-2 focus:ring-black text-center" 
+                  placeholder="0.00" 
+                />
+             </div>
+
+             <button 
+               onClick={handleStartShift}
+               disabled={!startCash || isProcessing}
+               className="w-full py-5 bg-black text-white rounded-[24px] font-black text-xl shadow-xl active:scale-95 transition-all disabled:opacity-30 flex items-center justify-center gap-3 border-2 border-black hover:bg-gray-900"
+             >
+               {isProcessing ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} {lang === 'ar' ? 'فتح الصندوق' : 'Open Drawer'}
+             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Shift Details Modal */}
+      {showShiftDetails && currentShift && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-xl z-[500] flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-stone-900 rounded-[48px] max-w-md w-full p-10 shadow-2xl animate-in zoom-in-95 relative">
+             <button onClick={() => setShowShiftDetails(false)} className="absolute top-6 right-6 p-2 hover:bg-stone-100 rounded-full transition-colors"><X size={24}/></button>
+             
+             <div className="flex items-center gap-4 mb-8">
+                <div className="p-4 bg-white border-2 border-black text-black rounded-3xl"><History size={28}/></div>
+                <div>
+                  <h3 className="text-2xl font-black">{lang === 'ar' ? 'تفاصيل الوردية' : 'Shift Details'}</h3>
+                  <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest">{new Date(currentShift.start_time).toLocaleString()}</p>
+                </div>
+             </div>
+
+             <div className="bg-stone-50 dark:bg-stone-950 p-6 rounded-[32px] mb-8 border border-stone-100 dark:border-stone-800 space-y-4">
+                <div className="flex justify-between items-center">
+                   <span className="text-xs font-bold text-stone-500 uppercase">{lang === 'ar' ? 'المبلغ الافتتاحي' : 'Initial Float'}</span>
+                   <span className="text-xl font-mono font-bold">{currentShift.initial_cash.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                   <span className="text-xs font-bold text-stone-500 uppercase">{lang === 'ar' ? 'مبيعات نقدية' : 'Cash Sales'}</span>
+                   <span className="text-xl font-mono font-bold text-green-600">+{shiftTotals.sales.toFixed(2)}</span>
+                </div>
+                {shiftTotals.cashIn > 0 && (
+                   <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-stone-500 uppercase">{lang === 'ar' ? 'إيداع نقدي' : 'Cash In'}</span>
+                      <span className="text-xl font-mono font-bold text-blue-600">+{shiftTotals.cashIn.toFixed(2)}</span>
+                   </div>
+                )}
+                {shiftTotals.cashOut > 0 && (
+                   <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-stone-500 uppercase">{lang === 'ar' ? 'سحب نقدي' : 'Cash Out'}</span>
+                      <span className="text-xl font-mono font-bold text-red-600">-{shiftTotals.cashOut.toFixed(2)}</span>
+                   </div>
+                )}
+                <div className="border-t border-dashed border-stone-200 dark:border-stone-800 my-2"></div>
+                <div className="flex justify-between items-center">
+                   <span className="text-sm font-black uppercase">{lang === 'ar' ? 'المتوقع في الدرج' : 'Expected Cash'}</span>
+                   <span className="text-3xl font-mono font-black">{shiftTotals.expected.toFixed(2)} <span className="text-xs opacity-50">{t.currency}</span></span>
+                </div>
+             </div>
+             
+             <div className="grid grid-cols-2 gap-4 mb-4">
+               <button 
+                 onClick={() => { setCashMovementType('IN'); setShowCashMovementModal(true); }}
+                 className="py-4 bg-blue-50 text-blue-600 rounded-2xl font-bold hover:bg-blue-100 transition-all"
+               >
+                 {lang === 'ar' ? 'إيداع' : 'Cash In'}
+               </button>
+               <button 
+                 onClick={() => { setCashMovementType('OUT'); setShowCashMovementModal(true); }}
+                 className="py-4 bg-red-50 text-red-600 rounded-2xl font-bold hover:bg-red-100 transition-all"
+               >
+                 {lang === 'ar' ? 'سحب' : 'Cash Out'}
+               </button>
+             </div>
+
+             <button 
+               onClick={() => setShowCloseShiftModal(true)}
+               className="w-full py-4 bg-black text-white rounded-2xl font-bold hover:bg-stone-800 transition-all active:scale-95 shadow-lg mb-3"
+             >
+               {lang === 'ar' ? 'إغلاق الوردية' : 'Close Shift'}
+             </button>
+
+             <button 
+               onClick={() => setShowShiftDetails(false)}
+               className="w-full py-4 bg-stone-100 dark:bg-stone-800 text-black dark:text-white rounded-2xl font-bold hover:bg-stone-200 transition-all active:scale-95"
+             >
+               {lang === 'ar' ? 'إغلاق' : 'Close'}
+             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Cash Movement Modal */}
+      {showCashMovementModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-xl z-[510] flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-stone-900 rounded-[40px] max-w-sm w-full p-8 shadow-2xl animate-in zoom-in-95">
+             <h3 className="text-xl font-black mb-6">
+               {cashMovementType === 'IN' ? (lang === 'ar' ? 'إيداع نقدي' : 'Cash In') : (lang === 'ar' ? 'سحب نقدي' : 'Cash Out')}
+             </h3>
+             <div className="space-y-4 mb-6">
+                <div>
+                  <label className="text-xs font-bold text-stone-500 uppercase mb-2 block">{lang === 'ar' ? 'المبلغ' : 'Amount'}</label>
+                  <input 
+                    type="number" 
+                    autoFocus
+                    value={cashMovementAmount}
+                    onChange={e => setCashMovementAmount(e.target.value)}
+                    className="w-full bg-stone-50 dark:bg-stone-950 border-none rounded-2xl px-4 py-3 font-mono font-bold text-xl outline-none focus:ring-2 focus:ring-black"
+                    placeholder="0.00"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-stone-500 uppercase mb-2 block">{lang === 'ar' ? 'السبب' : 'Reason'}</label>
+                  <input 
+                    type="text" 
+                    value={cashMovementReason}
+                    onChange={e => setCashMovementReason(e.target.value)}
+                    className="w-full bg-stone-50 dark:bg-stone-950 border-none rounded-2xl px-4 py-3 font-bold outline-none focus:ring-2 focus:ring-black"
+                    placeholder={lang === 'ar' ? 'مثال: شراء حليب' : 'e.g., Petty Cash'}
+                  />
+                </div>
+             </div>
+             <div className="flex gap-3">
+               <button 
+                 onClick={() => setShowCashMovementModal(false)}
+                 className="flex-1 py-3 bg-stone-100 text-stone-500 rounded-xl font-bold hover:bg-stone-200"
+               >
+                 {lang === 'ar' ? 'إلغاء' : 'Cancel'}
+               </button>
+               <button 
+                 onClick={handleCashMovement}
+                 disabled={!cashMovementAmount || !cashMovementReason || isProcessing}
+                 className={`flex-1 py-3 text-white rounded-xl font-bold shadow-lg disabled:opacity-50 ${cashMovementType === 'IN' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-600 hover:bg-red-700'}`}
+               >
+                 {lang === 'ar' ? 'تأكيد' : 'Confirm'}
+               </button>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Close Shift Modal */}
+      {showCloseShiftModal && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[520] flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-stone-900 rounded-[48px] max-w-md w-full p-10 shadow-2xl animate-in zoom-in-95 border border-stone-200 dark:border-stone-800">
+             {!shiftReport ? (
+               <>
+                 <div className="text-center mb-8">
+                   <h3 className="text-2xl font-black mb-2">{lang === 'ar' ? 'إغلاق الوردية' : 'Close Shift'}</h3>
+                   <p className="text-xs text-stone-400 font-bold uppercase tracking-widest">{lang === 'ar' ? 'عد النقود في الصندوق' : 'Count actual cash in drawer'}</p>
+                 </div>
+                 
+                 <div className="space-y-4 mb-8">
+                    <div>
+                      <label className="text-xs font-bold text-stone-500 uppercase mb-2 block">{lang === 'ar' ? 'النقد الفعلي' : 'Actual Cash Count'}</label>
+                      <input 
+                        type="number" 
+                        autoFocus
+                        value={actualCash}
+                        onChange={e => setActualCash(e.target.value)}
+                        className="w-full bg-stone-50 dark:bg-stone-950 border-none rounded-2xl px-6 py-5 font-mono font-black text-4xl text-black outline-none focus:ring-2 focus:ring-black text-center" 
+                        placeholder="0.00" 
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-stone-500 uppercase mb-2 block">{lang === 'ar' ? 'ملاحظات' : 'Notes'}</label>
+                      <textarea 
+                        value={closingNotes}
+                        onChange={e => setClosingNotes(e.target.value)}
+                        className="w-full bg-stone-50 dark:bg-stone-950 border-none rounded-2xl px-4 py-3 font-bold outline-none focus:ring-2 focus:ring-black h-24 resize-none"
+                        placeholder={lang === 'ar' ? 'أي ملاحظات إضافية...' : 'Any discrepancies or notes...'}
+                      />
+                    </div>
+                 </div>
+
+                 <div className="flex gap-4">
+                    <button 
+                      onClick={() => setShowCloseShiftModal(false)}
+                      className="flex-1 py-4 bg-stone-100 text-black rounded-2xl font-bold hover:bg-stone-200 transition-all"
+                    >
+                      {lang === 'ar' ? 'إلغاء' : 'Cancel'}
+                    </button>
+                    <button 
+                      onClick={handleCloseShiftCheck}
+                      disabled={!actualCash}
+                      className="flex-[2] py-4 bg-black text-white rounded-2xl font-bold shadow-xl hover:bg-gray-900 transition-all disabled:opacity-50"
+                    >
+                      {lang === 'ar' ? 'التالي' : 'Next'}
+                    </button>
+                 </div>
+               </>
+             ) : (
+               <>
+                 <div className="text-center mb-6">
+                   <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${Math.abs(shiftReport.discrepancy) < 0.5 ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                     {Math.abs(shiftReport.discrepancy) < 0.5 ? <CheckCircle2 size={32} /> : <AlertTriangle size={32} />}
+                   </div>
+                   <h3 className="text-xl font-black">{lang === 'ar' ? 'تقرير الوردية' : 'Shift Summary'}</h3>
+                 </div>
+
+                 <div className="bg-stone-50 dark:bg-stone-950 p-6 rounded-[32px] mb-8 space-y-3">
+                    <div className="flex justify-between">
+                       <span className="text-xs font-bold text-stone-500 uppercase">Expected</span>
+                       <span className="font-mono font-bold">{shiftReport.expected.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                       <span className="text-xs font-bold text-stone-500 uppercase">Actual</span>
+                       <span className="font-mono font-bold">{shiftReport.actual.toFixed(2)}</span>
+                    </div>
+                    <div className="border-t border-dashed border-stone-200 my-2"></div>
+                    <div className="flex justify-between items-center">
+                       <span className="text-sm font-black uppercase">Discrepancy</span>
+                       <span className={`text-2xl font-mono font-black ${Math.abs(shiftReport.discrepancy) > 0.5 ? 'text-red-600' : 'text-green-600'}`}>
+                         {shiftReport.discrepancy > 0 ? '+' : ''}{shiftReport.discrepancy.toFixed(2)}
+                       </span>
+                    </div>
+                 </div>
+
+                 <button 
+                   onClick={confirmCloseShift}
+                   className={`w-full py-4 text-white rounded-2xl font-bold shadow-xl transition-all ${Math.abs(shiftReport.discrepancy) > 0.5 ? 'bg-red-600 hover:bg-red-700' : 'bg-black hover:bg-gray-900'}`}
+                 >
+                   {lang === 'ar' ? 'تأكيد وإغلاق' : 'Confirm & Close Shift'}
+                 </button>
+                 <button 
+                   onClick={() => setShiftReport(null)}
+                   className="w-full mt-3 py-3 text-stone-400 font-bold text-sm hover:text-black"
+                 >
+                   {lang === 'ar' ? 'عودة' : 'Back'}
+                 </button>
+               </>
+             )}
           </div>
         </div>
       )}

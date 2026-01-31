@@ -47,7 +47,7 @@ const AIInsights: React.FC = () => {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-stone-800 dark:text-stone-100 flex items-center gap-3">
-            <BrainCircuit className="text-amber-600" />
+            <BrainCircuit className="text-black dark:text-white" />
             {t.aiInsights}
           </h2>
           <p className="text-stone-500 dark:text-stone-400">{t.advancedAnalytics}</p>
@@ -63,34 +63,34 @@ const AIInsights: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-gradient-to-br from-amber-500 to-amber-700 p-6 rounded-3xl text-white shadow-xl transform transition-transform hover:-translate-y-1">
-          <div className="p-2 bg-white/20 rounded-lg w-fit mb-4"><TrendingUp size={24} /></div>
+        <div className="bg-white dark:bg-stone-900 border border-black dark:border-white p-6 rounded-3xl text-black dark:text-white shadow-xl transform transition-transform hover:-translate-y-1">
+          <div className="p-2 bg-stone-100 dark:bg-stone-800 rounded-lg w-fit mb-4"><TrendingUp size={24} /></div>
           <h4 className="font-bold text-lg mb-1">{t.expectedGrowth}</h4>
-          <p className="text-amber-100 text-sm leading-relaxed">
+          <p className="text-stone-600 dark:text-stone-300 text-sm leading-relaxed">
             {stats ? (lang === 'ar' ? `بناءً على مبيعات ${stats.totalRecentSales} ر.ق الأخيرة، يتوقع نمو مستقر.` : `Based on last ${stats.totalRecentSales} QAR in sales, stable growth predicted.`) : '...'}
           </p>
         </div>
-        <div className="bg-gradient-to-br from-stone-800 to-black p-6 rounded-3xl text-white shadow-xl transform transition-transform hover:-translate-y-1">
-          <div className="p-2 bg-white/10 rounded-lg w-fit mb-4"><AlertCircle size={24} className="text-red-400" /></div>
+        <div className="bg-stone-100 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 p-6 rounded-3xl text-black dark:text-white shadow-xl transform transition-transform hover:-translate-y-1">
+          <div className="p-2 bg-stone-200 dark:bg-stone-700 rounded-lg w-fit mb-4"><AlertCircle size={24} className="text-black dark:text-white" /></div>
           <h4 className="font-bold text-lg mb-1">{t.stockAlert}</h4>
-          <p className="text-stone-400 text-sm leading-relaxed">
+          <p className="text-stone-600 dark:text-stone-300 text-sm leading-relaxed">
             {stats ? (lang === 'ar' ? `يوجد ${stats.lowStockCount} أصناف مخزونها حرج.` : `${stats.lowStockCount} items have critical stock levels.`) : '...'}
           </p>
         </div>
-        <div className="bg-gradient-to-br from-blue-600 to-blue-800 p-6 rounded-3xl text-white shadow-xl transform transition-transform hover:-translate-y-1">
-          <div className="p-2 bg-white/20 rounded-lg w-fit mb-4"><Lightbulb size={24} /></div>
+        <div className="bg-white dark:bg-stone-900 border border-black dark:border-white p-6 rounded-3xl text-black dark:text-white shadow-xl transform transition-transform hover:-translate-y-1">
+          <div className="p-2 bg-stone-100 dark:bg-stone-800 rounded-lg w-fit mb-4"><Lightbulb size={24} /></div>
           <h4 className="font-bold text-lg mb-1">{t.optimizationOpportunity}</h4>
-          <p className="text-blue-100 text-sm leading-relaxed">
+          <p className="text-stone-600 dark:text-stone-300 text-sm leading-relaxed">
             {stats ? (lang === 'ar' ? `متوسط الهدر ${stats.avgWaste.toFixed(1)}% يتيح فرصة لتقليل التكاليف.` : `Average waste of ${stats.avgWaste.toFixed(1)}% offers cost-cutting potential.`) : '...'}
           </p>
         </div>
       </div>
 
       <div className="bg-white dark:bg-stone-900 p-6 md:p-10 rounded-[32px] md:rounded-[40px] shadow-sm border border-stone-200 dark:border-stone-800 relative overflow-hidden min-h-[400px] transition-colors duration-300">
-        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-amber-400 via-orange-500 to-amber-600" />
+        <div className="absolute top-0 left-0 w-full h-1 bg-black dark:bg-white" />
         
         <div className="flex items-center gap-3 mb-8">
-          <div className="bg-amber-100 dark:bg-amber-900/30 p-2 rounded-xl text-amber-600 dark:text-amber-400">
+          <div className="bg-stone-100 dark:bg-stone-800 p-2 rounded-xl text-black dark:text-white">
             <Sparkles size={24} />
           </div>
           <h3 className="text-xl font-bold text-stone-800 dark:text-stone-100">{t.smartAnalyst}</h3>
@@ -103,7 +103,7 @@ const AIInsights: React.FC = () => {
             <div className="h-4 bg-stone-100 dark:bg-stone-800 rounded-full w-5/6 animate-pulse" />
             <div className="h-4 bg-stone-100 dark:bg-stone-800 rounded-full w-2/3 animate-pulse" />
             <div className="flex justify-center py-10">
-               <Loader2 className="animate-spin text-amber-500" size={32} />
+               <Loader2 className="animate-spin text-black dark:text-white" size={32} />
             </div>
           </div>
         ) : (

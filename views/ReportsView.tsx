@@ -1,10 +1,11 @@
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
-import { FileDown, Calendar } from 'lucide-react';
+import { FileDown, Calendar, DollarSign, TrendingUp, TrendingDown, AlertTriangle } from 'lucide-react';
 import { useLanguage, useTheme } from '../App';
+import { supabase } from '../supabaseClient';
 
-const COLORS = ['#d97706', '#ea580c', '#78350f', '#f59e0b'];
+const COLORS = ['#000000', '#57534e', '#a8a29e', '#d6d3d1'];
 
 const ReportsView: React.FC = () => {
   const { lang, t } = useLanguage();
@@ -85,13 +86,13 @@ const ReportsView: React.FC = () => {
                 <div className="flex items-center justify-between sm:justify-end gap-4 md:gap-8 grow">
                   <div className={`text-${t.dir === 'rtl' ? 'right' : 'left'} shrink-0`}>
                     <span className="block text-[10px] text-stone-400 dark:text-stone-500 font-bold uppercase">{lang === 'ar' ? 'هامش الربح' : 'Margin'}</span>
-                    <span className={`text-xs md:text-sm font-bold ${product.trend === 'up' ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-500'}`}>
+                    <span className={`text-xs md:text-sm font-bold ${product.trend === 'up' ? 'text-black dark:text-white' : 'text-stone-500 dark:text-stone-400'}`}>
                       {product.margin}
                     </span>
                   </div>
                   <div className="w-24 md:w-32 bg-stone-100 dark:bg-stone-800 h-1.5 md:h-2 rounded-full overflow-hidden shrink-0 transition-colors">
                     <div 
-                      className="bg-amber-600 dark:bg-amber-500 h-full rounded-full transition-all duration-1000" 
+                      className="bg-black dark:bg-white h-full rounded-full transition-all duration-1000" 
                       style={{ width: product.margin }} 
                     />
                   </div>
@@ -99,6 +100,114 @@ const ReportsView: React.FC = () => {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* Cash Management Report Section */}
+      <div className="bg-white dark:bg-stone-900 p-5 md:p-8 rounded-2xl shadow-sm border border-stone-200 dark:border-stone-800 transition-colors">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+          <div>
+            <h3 className="text-base md:text-lg font-bold text-stone-800 dark:text-stone-100">{lang === 'ar' ? 'تقرير إدارة النقدية' : 'Cash Management Report'}</h3>
+            <p className="text-xs md:text-sm text-stone-500 dark:text-stone-400">{lang === 'ar' ? 'ملخص حركة النقدية والتسويات' : 'Cash movement summary and reconciliations'}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <DollarSign size={18} className="text-stone-400 dark:text-stone-500" />
+            <span className="text-xs font-bold text-stone-600 dark:text-stone-300">{lang === 'ar' ? 'نهاية اليوم' : 'End of Day'}</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+          {/* Cash Summary Card */}
+          <div className="bg-stone-50 dark:bg-stone-950 p-4 md:p-6 rounded-xl border border-stone-100 dark:border-stone-800">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-sm font-bold text-stone-700 dark:text-stone-200">{lang === 'ar' ? 'ملخص النقدية' : 'Cash Summary'}</h4>
+              <TrendingUp size={16} className="text-green-600" />
+            </div>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-stone-500 dark:text-stone-400">{lang === 'ar' ? 'الرصيد الافتتاحي' : 'Opening Balance'}</span>
+                <span className="text-sm font-mono font-bold">1,000.00</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-stone-500 dark:text-stone-400">{lang === 'ar' ? 'المبيعات النقدية' : 'Cash Sales'}</span>
+                <span className="text-sm font-mono font-bold text-green-600">+2,450.00</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-stone-500 dark:text-stone-400">{lang === 'ar' ? 'الإيداعات' : 'Cash In'}</span>
+                <span className="text-sm font-mono font-bold text-blue-600">+500.00</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-stone-500 dark:text-stone-400">{lang === 'ar' ? 'السحوبات' : 'Cash Out'}</span>
+                <span className="text-sm font-mono font-bold text-red-600">-200.00</span>
+              </div>
+              <div className="border-t border-dashed border-stone-200 dark:border-stone-700 my-2"></div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-black uppercase">{lang === 'ar' ? 'الرصيد المتوقع' : 'Expected Balance'}</span>
+                <span className="text-lg font-mono font-black">3,750.00</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Reconciliation Status Card */}
+          <div className="bg-stone-50 dark:bg-stone-950 p-4 md:p-6 rounded-xl border border-stone-100 dark:border-stone-800">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-sm font-bold text-stone-700 dark:text-stone-200">{lang === 'ar' ? 'حالة التسوية' : 'Reconciliation Status'}</h4>
+              <AlertTriangle size={16} className="text-amber-600" />
+            </div>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-stone-500 dark:text-stone-400">{lang === 'ar' ? 'الرصيد الفعلي' : 'Actual Count'}</span>
+                <span className="text-sm font-mono font-bold">3,745.00</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-stone-500 dark:text-stone-400">{lang === 'ar' ? 'فرق التسوية' : 'Discrepancy'}</span>
+                <span className="text-sm font-mono font-bold text-red-600">-5.00</span>
+              </div>
+              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 mt-4">
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  {lang === 'ar' ? 'فرق بسيط في التسوية. يرجى التحقق من الأوراق المعدنية الصغيرة.' : 'Minor discrepancy detected. Please check small coins and bills.'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Recent Movements Card */}
+          <div className="bg-stone-50 dark:bg-stone-950 p-4 md:p-6 rounded-xl border border-stone-100 dark:border-stone-800">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-sm font-bold text-stone-700 dark:text-stone-200">{lang === 'ar' ? 'أحدث الحركات' : 'Recent Movements'}</h4>
+              <TrendingDown size={16} className="text-stone-600" />
+            </div>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center py-2 border-b border-stone-100 dark:border-stone-800">
+                <div>
+                  <p className="text-xs font-bold">{lang === 'ar' ? 'شراء حليب' : 'Milk Purchase'}</p>
+                  <p className="text-xs text-stone-500 dark:text-stone-400">2:30 PM</p>
+                </div>
+                <span className="text-sm font-mono font-bold text-red-600">-120.00</span>
+              </div>
+              <div className="flex justify-between items-center py-2 border-b border-stone-100 dark:border-stone-800">
+                <div>
+                  <p className="text-xs font-bold">{lang === 'ar' ? 'إيداع نقدي' : 'Cash Deposit'}</p>
+                  <p className="text-xs text-stone-500 dark:text-stone-400">11:45 AM</p>
+                </div>
+                <span className="text-sm font-mono font-bold text-blue-600">+500.00</span>
+              </div>
+              <div className="flex justify-between items-center py-2">
+                <div>
+                  <p className="text-xs font-bold">{lang === 'ar' ? 'مصاريف نثرية' : 'Petty Cash'}</p>
+                  <p className="text-xs text-stone-500 dark:text-stone-400">9:15 AM</p>
+                </div>
+                <span className="text-sm font-mono font-bold text-red-600">-80.00</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 flex justify-end">
+          <button className="flex items-center gap-2 bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 px-4 md:px-6 py-2 md:py-3 rounded-xl font-bold shadow-lg hover:bg-black dark:hover:bg-white text-xs md:text-sm whitespace-nowrap active:scale-95 transition-all">
+            <FileDown size={16} />
+            {lang === 'ar' ? 'تصدير تقرير النقدية' : 'Export Cash Report'}
+          </button>
         </div>
       </div>
     </div>
